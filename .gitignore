@@ -1,0 +1,18 @@
+# ไฟล์แคชและไฟล์ที่ Python คอมไพล์
+__pycache__/
+*.py[cod]
+
+# สภาพแวดล้อมเสมือนของ Python
+.venv/
+venv/
+
+# ค่าตั้งค่าส่วนตัวและค่าลับ แต่เก็บไฟล์ตัวอย่างไว้ได้
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# ไฟล์ที่ระบบปฏิบัติการสร้าง
+.DS_Store
+Thumbs.db
