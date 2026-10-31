@@ -1,10 +1,56 @@
-"""ขั้นที่ 2: รับหนึ่งข้อความจาก Client แล้วตอบกลับผ่าน TCP Socket."""
+"""ขั้นที่ 3: รับลงทะเบียนชื่อและตอบข้อความ JSON บนการเชื่อมต่อเดิม."""
 
 import socket
 
+from protocol import receive_messages, send_message
+
 HOST = "127.0.0.1"  # รับเฉพาะการเชื่อมต่อภายในเครื่องนี้
 PORT = 5000
-BUFFER_SIZE = 4096
+
+
+def handle_client(connection):
+    # ชื่อนี้ผูกกับ Socket ที่กำลังคุยอยู่ ไม่เชื่อชื่อผู้ส่งในข้อความแต่ละรอบ
+    client_name = None
+
+    try:
+        for message in receive_messages(connection):
+            message_type = message.get("type")
+
+            if client_name is None:
+                if message_type != "register":
+                    send_message(connection, {"type": "error", "text": "ต้อง register ชื่อก่อนส่งข้อความ"})
+                    continue
+
+                name = message.get("name")
+                if not isinstance(name, str) or not name.strip():
+                    send_message(connection, {"type": "error", "text": "ชื่อต้องเป็นข้อความที่ไม่ว่าง"})
+                    continue
+
+                client_name = name.strip()
+                print(f"ลงทะเบียนชื่อแล้ว: {client_name}")
+                send_message(connection, {"type": "registered", "name": client_name})
+
+            elif message_type == "message":
+                text = message.get("text")
+                if not isinstance(text, str):
+                    send_message(connection, {"type": "error", "text": "text ต้องเป็นข้อความ"})
+                    continue
+
+                print(f"{client_name} ส่งมา: {text}")
+                send_message(connection, {
+                    "type": "message",
+                    "from": "server",
+                    "to": client_name,
+                    "text": f"Server ได้รับข้อความจาก {client_name}: {text}",
+                })
+
+            else:
+                send_message(connection, {"type": "error", "text": "คำสั่งนี้ใช้ไม่ได้หลังลงทะเบียนชื่อแล้ว"})
+
+    except ValueError as error:
+        # JSON ผิดหรือข้อความไม่ครบ: แจ้งสาเหตุ แล้วจบการเชื่อมต่อนี้
+        send_message(connection, {"type": "error", "text": str(error)})
+        print(f"ข้อมูลจาก Client ไม่ถูกต้อง: {error}")
 
 def main():
     # AF_INET คือ IPv4 และ SOCK_STREAM คือ TCP
@@ -20,24 +66,9 @@ def main():
         with connection:
             print(f"Client เชื่อมต่อแล้ว: {address}")
 
-            chunks = []
-            while True:
-                data = connection.recv(BUFFER_SIZE)
-                if not data:
-                    # Client ปิดเฉพาะฝั่งส่ง เป็นสัญญาณว่าส่งข้อความครบแล้ว
-                    break
-                chunks.append(data)
+            handle_client(connection)
 
-            # รวมไบต์ให้ครบก่อน decode เพราะตัวอักษรไทยอาจถูกแบ่งระหว่าง recv()
-            message = b"".join(chunks).decode("utf-8")
-            print(f"Client ส่งมา: {message}")
-
-            reply = f"Server ได้รับข้อความแล้ว: {message}"
-            connection.sendall(reply.encode("utf-8"))
-            print("Server ส่งคำตอบกลับแล้ว")
-
-        # ออกจาก with จะปิด Socket ทำให้ Client รู้ว่าได้รับคำตอบครบแล้ว
-    print("Server จบการทดสอบหนึ่งข้อความแล้ว")
+    print("Client ออกจากการเชื่อมต่อแล้ว จบการทดสอบ Server")
 
 
 if __name__ == "__main__":
