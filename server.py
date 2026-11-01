@@ -1,12 +1,16 @@
 """Route private messages between multiple TCP clients."""
 
+import os
+from pathlib import Path
 import socket
 import threading
 
 from protocol import receive_messages, send_message
+from state_store import ChatStateStore
 
 HOST = "127.0.0.1"
 PORT = 5000
+STATE_PATH = Path(os.environ.get("CHAT_STATE_PATH", Path(__file__).resolve().parent / "output" / "chat_state.json"))
 
 # กุญแจนี้ป้องกันการอ่านและแก้รายชื่อพร้อมกันจากหลาย thread
 clients = {}
@@ -14,6 +18,9 @@ connections = set()
 clients_lock = threading.Lock()
 users_version = 0
 server_stopping = threading.Event()
+chat_state = None
+room_locks = {}
+room_locks_lock = threading.Lock()
 
 
 class ClientConnection:
@@ -25,6 +32,8 @@ class ClientConnection:
         # หลาย thread อาจส่งหาคนเดียวกัน ต้องส่ง JSON ให้จบทีละข้อความ
         self.send_lock = threading.Lock()
         self.last_users_version = -1
+        self.supports_rooms = False
+        self.announced_rooms = set()
 
     def send(self, message):
         with self.send_lock:
@@ -37,6 +46,31 @@ class ClientConnection:
                 return
             send_message(self.connection, message)
             self.last_users_version = message["version"]
+
+    def send_room(self, room, request_id=None):
+        with self.send_lock:
+            response = {"type": "room_opened", **room}
+            if request_id is not None:
+                response["request_id"] = request_id
+            send_message(self.connection, response)
+            self.announced_rooms.add(room["room_id"])
+
+    def send_private(self, room, message, request_id=None):
+        with self.send_lock:
+            if self.supports_rooms:
+                if room["room_id"] not in self.announced_rooms:
+                    # ส่งข้อมูลห้องและประวัติก่อนข้อความสด โดยไม่ใส่ข้อความล่าสุดซ้ำในประวัติ
+                    history = [item for item in room["messages"] if item["message_id"] != message["message_id"]]
+                    send_message(self.connection, {"type": "room_opened", **room, "messages": history})
+                    self.announced_rooms.add(room["room_id"])
+                event = dict(message)
+                if request_id is not None:
+                    event["request_id"] = request_id
+                send_message(self.connection, event)
+            else:
+                send_message(self.connection, {
+                    "type": "message", "from": message["from"], "to": message["to"], "text": message["text"],
+                })
 
     def close(self):
         try:
@@ -104,6 +138,8 @@ def register_client(client, message):
                 response = {"type": "error", "text": "Name is already in use. Choose another name."}
             else:
                 client.name = name
+                capabilities = message.get("capabilities", [])
+                client.supports_rooms = isinstance(capabilities, list) and "private_rooms" in capabilities
                 clients[name] = client
                 users_version += 1
                 response = {"type": "registered", "name": name}
@@ -112,7 +148,74 @@ def register_client(client, message):
 
     if client.name is not None:
         print(f"Registered: {client.name}")
+        if client.supports_rooms:
+            client.send({"type": "private_rooms", "rooms": chat_state.list_rooms(client.name)})
         broadcast_users()
+
+
+def room_lock(room_id):
+    with room_locks_lock:
+        return room_locks.setdefault(room_id, threading.Lock())
+
+
+def request_id_for(message):
+    request_id = message.get("request_id")
+    if not isinstance(request_id, str) or not request_id.strip():
+        raise ValueError("A non-empty request_id is required.")
+    return request_id
+
+
+def open_private(sender, message):
+    request_id = request_id_for(message)
+    room_id = message.get("room_id")
+    if room_id is not None:
+        if not isinstance(room_id, str):
+            raise ValueError("room_id must be a string.")
+        room = chat_state.snapshot(room_id, sender.name)
+    else:
+        other = message.get("to")
+        if not isinstance(other, str) or not other.strip() or other.strip() == sender.name:
+            raise ValueError("Choose another user for a private room.")
+        other = other.strip()
+        room = chat_state.find_room(sender.name, other)
+        if room is None:
+            with clients_lock:
+                available = other in clients
+            if not available:
+                raise ValueError(f"Recipient '{other}' is not connected.")
+            room = chat_state.get_or_create_room(sender.name, other)
+    with room_lock(room["room_id"]):
+        sender.send_room(chat_state.snapshot(room["room_id"], sender.name), request_id)
+
+
+def deliver_private(sender, room_id, text, request_id=None, legacy=False):
+    # ล็อกเฉพาะห้องเพื่อรักษาลำดับประวัติและข้อความสด ไม่ถือ clients_lock ระหว่างส่งเครือข่าย
+    with room_lock(room_id):
+        room = chat_state.snapshot(room_id, sender.name)
+        other = next(name for name in room["members"] if name != sender.name)
+        with clients_lock:
+            recipient = clients.get(other)
+        if recipient is None:
+            raise ValueError(f"Recipient '{other}' is not connected.")
+        message = chat_state.append_message(room_id, sender.name, text)
+        room = chat_state.snapshot(room_id, sender.name)
+        forwarded = True
+        try:
+            recipient.send_private(room, message)
+        except OSError:
+            forwarded = False
+            disconnect_client(recipient)
+        if not legacy:
+            sender.send_private(room, message, request_id)
+        if not forwarded:
+            sender.send({"type": "error", "request_id": request_id, "room_id": room_id,
+                         "message_id": message["message_id"], "persisted": True,
+                         "text": f"Message was saved, but recipient '{other}' disconnected before live delivery completed."})
+            return
+        response = {"type": "sent", "to": other}
+        if not legacy:
+            response.update(request_id=request_id, room_id=room_id, message_id=message["message_id"])
+        sender.send(response)
 
 
 def route_message(sender, message):
@@ -131,6 +234,14 @@ def route_message(sender, message):
 
     if recipient is None:
         sender.send({"type": "error", "text": f"Recipient '{recipient_name}' is not connected."})
+        return
+
+    if recipient_name != sender.name:
+        try:
+            room = chat_state.get_or_create_room(sender.name, recipient_name)
+            deliver_private(sender, room["room_id"], text, legacy=True)
+        except (ValueError, OSError) as error:
+            sender.send({"type": "error", "text": str(error)})
         return
 
     try:
@@ -164,8 +275,21 @@ def handle_client(client, address):
                     client.send({"type": "error", "text": "Register a name before sending messages."})
             elif message_type == "message":
                 route_message(client, message)
+            elif message_type in ("open_private", "private_message"):
+                try:
+                    if message_type == "open_private":
+                        open_private(client, message)
+                    else:
+                        request_id = request_id_for(message)
+                        room_id = message.get("room_id")
+                        if not isinstance(room_id, str):
+                            raise ValueError("room_id must be a string.")
+                        deliver_private(client, room_id, message.get("text"), request_id)
+                except (ValueError, OSError) as error:
+                    client.send({"type": "error", "request_id": message.get("request_id"),
+                                 "room_id": message.get("room_id"), "text": str(error)})
             else:
-                client.send({"type": "error", "text": "Only message commands are allowed after registration."})
+                client.send({"type": "error", "text": "Unknown command after registration."})
     except ValueError as error:
         try:
             client.send({"type": "error", "text": str(error)})
@@ -180,6 +304,8 @@ def handle_client(client, address):
 
 
 def main():
+    global chat_state
+    chat_state = ChatStateStore(STATE_PATH)
     server_stopping.clear()
     workers = set()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
@@ -218,6 +344,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except OSError as error:
+    except (OSError, ValueError) as error:
         print(f"Server error: {error}")
         raise SystemExit(1)

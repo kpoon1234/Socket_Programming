@@ -25,10 +25,13 @@ class NetworkClient:
         self.reason = "Server disconnected."
         self.intentional = False
 
-    def connect(self, host, port, name):
+    def connect(self, host, port, name, capabilities=None):
         if self.receiver is not None or self.stopped.is_set():
             raise RuntimeError("Create a new NetworkClient for each connection attempt.")
-        self.outgoing.put({"type": "register", "name": name})
+        registration = {"type": "register", "name": name}
+        if capabilities:
+            registration["capabilities"] = capabilities
+        self.outgoing.put(registration)
         self.receiver = threading.Thread(
             target=self.receive_loop, args=(host, port), name="chat-receiver", daemon=True
         )
