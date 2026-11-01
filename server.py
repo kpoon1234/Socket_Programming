@@ -1,81 +1,178 @@
-"""ขั้นที่ 3: รับลงทะเบียนชื่อและตอบข้อความ JSON บนการเชื่อมต่อเดิม."""
+"""Route private messages between multiple TCP clients."""
 
 import socket
+import threading
 
 from protocol import receive_messages, send_message
 
-HOST = "127.0.0.1"  # รับเฉพาะการเชื่อมต่อภายในเครื่องนี้
+HOST = "127.0.0.1"
 PORT = 5000
 
+# กุญแจนี้ป้องกันการอ่านและแก้รายชื่อพร้อมกันจากหลาย thread
+clients = {}
+connections = set()
+clients_lock = threading.Lock()
 
-def handle_client(connection):
-    # ชื่อนี้ผูกกับ Socket ที่กำลังคุยอยู่ ไม่เชื่อชื่อผู้ส่งในข้อความแต่ละรอบ
-    client_name = None
+
+class ClientConnection:
+    """Keep a socket, its registered name, and its send lock together."""
+
+    def __init__(self, connection):
+        self.connection = connection
+        self.name = None
+        # หลาย thread อาจส่งหาคนเดียวกัน ต้องส่ง JSON ให้จบทีละข้อความ
+        self.send_lock = threading.Lock()
+
+    def send(self, message):
+        with self.send_lock:
+            send_message(self.connection, message)
+
+    def close(self):
+        try:
+            # ปลุกงานที่ติดอยู่ใน recv หรือ send ให้จบได้ด้วย
+            self.connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        self.connection.close()
+
+
+def disconnect_client(client):
+    with clients_lock:
+        # ตรวจว่าเป็นการเชื่อมต่อเดิม ก่อนลบชื่อที่อาจมีคนเข้ามาใช้ใหม่
+        if clients.get(client.name) is client:
+            del clients[client.name]
+        connections.discard(client)
+    client.close()
+
+
+def register_client(client, message):
+    name = message.get("name")
+    if not isinstance(name, str) or not name.strip():
+        client.send({"type": "error", "text": "Name must be a non-empty string."})
+        return
+
+    name = name.strip()
+    if name == "/quit":
+        client.send({"type": "error", "text": "The name '/quit' is reserved for the exit command."})
+        return
+
+    # ล็อกฝั่งส่งก่อนเผยแพร่ชื่อ เพื่อให้ registered มาก่อนข้อความจากคนอื่น
+    with client.send_lock:
+        with clients_lock:
+            if name in clients:
+                response = {"type": "error", "text": "Name is already in use. Choose another name."}
+            else:
+                client.name = name
+                clients[name] = client
+                response = {"type": "registered", "name": name}
+        # ปล่อยกุญแจรายชื่อแล้ว จึงส่งข้อมูลผ่านเครือข่าย
+        send_message(client.connection, response)
+
+    if client.name is not None:
+        print(f"Registered: {client.name}")
+
+
+def route_message(sender, message):
+    recipient_name = message.get("to")
+    text = message.get("text")
+    if not isinstance(recipient_name, str) or not recipient_name.strip():
+        sender.send({"type": "error", "text": "Recipient must be a non-empty string."})
+        return
+    if not isinstance(text, str):
+        sender.send({"type": "error", "text": "Message text must be a string."})
+        return
+
+    recipient_name = recipient_name.strip()
+    with clients_lock:
+        recipient = clients.get(recipient_name)
+
+    if recipient is None:
+        sender.send({"type": "error", "text": f"Recipient '{recipient_name}' is not connected."})
+        return
 
     try:
-        for message in receive_messages(connection):
+        recipient.send({
+            "type": "message",
+            # ใช้ชื่อจากการเชื่อมต่อ ไม่เชื่อฟิลด์ from ที่ Client อาจแนบมาเอง
+            "from": sender.name,
+            "to": recipient_name,
+            "text": text,
+        })
+    except OSError:
+        # ผู้รับอาจหลุดหลังค้นชื่อเจอ ต้องไม่ทำให้ผู้ส่งหลุดตาม
+        disconnect_client(recipient)
+        sender.send({"type": "error", "text": f"Recipient '{recipient_name}' disconnected before forwarding completed."})
+        return
+
+    # ยืนยันว่า Server ส่งผ่าน Socket แล้ว ไม่ใช่การยืนยันว่าอีกฝ่ายอ่านแล้ว
+    sender.send({"type": "sent", "to": recipient_name})
+    print(f"Forwarded: {sender.name} -> {recipient_name}")
+
+
+def handle_client(client, address):
+    print(f"Client connected: {address}")
+    try:
+        for message in receive_messages(client.connection):
             message_type = message.get("type")
-
-            if client_name is None:
-                if message_type != "register":
-                    send_message(connection, {"type": "error", "text": "ต้อง register ชื่อก่อนส่งข้อความ"})
-                    continue
-
-                name = message.get("name")
-                if not isinstance(name, str) or not name.strip():
-                    send_message(connection, {"type": "error", "text": "ชื่อต้องเป็นข้อความที่ไม่ว่าง"})
-                    continue
-
-                client_name = name.strip()
-                print(f"ลงทะเบียนชื่อแล้ว: {client_name}")
-                send_message(connection, {"type": "registered", "name": client_name})
-
+            if client.name is None:
+                if message_type == "register":
+                    register_client(client, message)
+                else:
+                    client.send({"type": "error", "text": "Register a name before sending messages."})
             elif message_type == "message":
-                text = message.get("text")
-                if not isinstance(text, str):
-                    send_message(connection, {"type": "error", "text": "text ต้องเป็นข้อความ"})
-                    continue
-
-                print(f"{client_name} ส่งมา: {text}")
-                send_message(connection, {
-                    "type": "message",
-                    "from": "server",
-                    "to": client_name,
-                    "text": f"Server ได้รับข้อความจาก {client_name}: {text}",
-                })
-
+                route_message(client, message)
             else:
-                send_message(connection, {"type": "error", "text": "คำสั่งนี้ใช้ไม่ได้หลังลงทะเบียนชื่อแล้ว"})
-
+                client.send({"type": "error", "text": "Only message commands are allowed after registration."})
     except ValueError as error:
-        # JSON ผิดหรือข้อความไม่ครบ: แจ้งสาเหตุ แล้วจบการเชื่อมต่อนี้
-        send_message(connection, {"type": "error", "text": str(error)})
-        print(f"ข้อมูลจาก Client ไม่ถูกต้อง: {error}")
+        try:
+            client.send({"type": "error", "text": str(error)})
+        except OSError:
+            pass
+        print(f"Invalid data from {client.name or address}: {error}")
+    except OSError as error:
+        print(f"Connection ended for {client.name or address}: {error}")
+    finally:
+        disconnect_client(client)
+        print(f"Client disconnected: {client.name or address}")
+
 
 def main():
-    # AF_INET คือ IPv4 และ SOCK_STREAM คือ TCP
+    workers = set()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
-        # ช่วยให้เปิด Server ใหม่ได้หลังจบการทดสอบรอบก่อน
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.bind((HOST, PORT))
         server.listen()
-        print(f"Server รอ Client ที่ {HOST}:{PORT}")
-
-        # accept() จะรอจนมี Client เชื่อมต่อ แล้วคืน Socket สำหรับคุยกับคนนั้น
-        connection, address = server.accept()
-        with connection:
-            print(f"Client เชื่อมต่อแล้ว: {address}")
-
-            handle_client(connection)
-
-    print("Client ออกจากการเชื่อมต่อแล้ว จบการทดสอบ Server")
+        host, port = server.getsockname()
+        print(f"Server listening on {host}:{port}")
+        try:
+            while True:
+                # Socket นี้รอรับคนใหม่ ส่วนการคุยใช้ Socket ที่ accept คืนมา
+                connection, address = server.accept()
+                client = ClientConnection(connection)
+                with clients_lock:
+                    connections.add(client)
+                worker = threading.Thread(
+                    target=handle_client, args=(client, address), daemon=True
+                )
+                worker.start()
+                workers = {thread for thread in workers if thread.is_alive()}
+                workers.add(worker)
+        except KeyboardInterrupt:
+            print("\nStopping server...")
+        finally:
+            with clients_lock:
+                active_connections = list(connections)
+            # ปิดทั้งคนที่ลงชื่อแล้วและคนที่ยังไม่ได้ลงชื่อ โดยไม่ถือกุญแจรายชื่อ
+            for client in active_connections:
+                client.close()
+            for worker in workers:
+                worker.join()
+    print("Server stopped.")
 
 
 if __name__ == "__main__":
     try:
         main()
-    except KeyboardInterrupt:
-        print("\nหยุด Server แล้ว")
     except OSError as error:
-        print(f"Server ทำงานไม่สำเร็จ: {error}")
+        print(f"Server error: {error}")
         raise SystemExit(1)
