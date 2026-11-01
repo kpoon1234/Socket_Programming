@@ -1,0 +1,14 @@
+{
+  "name": "socket-chat-client",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i ./web/input.css -o ./web/assets/styles.css --minify",
+    "watch:css": "tailwindcss -i ./web/input.css -o ./web/assets/styles.css --watch",
+    "check:js": "node --check web/app.js"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.0",
+    "tailwindcss": "^4.1.0"
+  }
+}

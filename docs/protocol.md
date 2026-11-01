@@ -28,7 +28,7 @@ Server ตอบ `registered` เป็นคำตอบแรกของก�
 {"type": "error", "text": "Name is already in use. Choose another name."}
 ```
 
-Terminal client ลองชื่อใหม่ผ่าน Socket เดิมได้ ส่วน GUI ปิดการเชื่อมต่อที่ลงชื่อไม่สำเร็จ แล้วให้แก้ชื่อและกด Connect ใหม่ งานเครือข่ายแต่ละครั้งมีคิวและ thread ของตัวเองเพื่อไม่ให้เหตุการณ์จากรอบเก่าปนกับรอบใหม่
+Terminal client ลองชื่อใหม่ผ่าน Socket เดิมได้ ส่วนเว็บและ Tkinter ปิดการเชื่อมต่อที่ลงชื่อไม่สำเร็จ แล้วให้แก้ชื่อและกด Connect ใหม่ งานเครือข่ายแต่ละครั้งมีคิวและ thread ของตัวเองเพื่อไม่ให้เหตุการณ์จากรอบเก่าปนกับรอบใหม่
 
 เมื่อรายชื่อเปลี่ยน Server ส่งภาพรวมรายชื่อทั้งหมดให้ผู้ใช้ที่ลงชื่อแล้วทุกคน รวมคนที่เพิ่งเข้า:
 
@@ -50,7 +50,41 @@ Terminal client ลองชื่อใหม่ผ่าน Socket เดิ�
 {"type": "message", "to": "bob", "text": "Hello Bob!"}
 ```
 
-## เหตุการณ์ภายใน Client GUI
+## Browser และ Python bridge
+
+หน้าเว็บโหลด HTML/JavaScript/CSS ผ่าน HTTP จาก bridge ภายในเครื่อง (เริ่มต้น `127.0.0.1:8765`) จากนั้นเปิด WebSocket ที่ `/ws` เพื่อส่งคำสั่งและรับเหตุการณ์ ส่วน bridge ติดต่อ TCP Server เดิม (เริ่มต้น `127.0.0.1:5000`) ผ่าน `NetworkClient`
+
+WebSocket ส่งหนึ่ง JSON object ต่อ text message จึงไม่ต้องเติม `\n` ส่วน TCP ระหว่าง NetworkClient กับ Server ยังใช้ JSON จบด้วย `\n` ตามเดิม
+
+คำสั่งเริ่ม session จาก Browser ไป bridge:
+
+```json
+{"type": "connect", "host": "127.0.0.1", "port": 5000, "name": "alice"}
+```
+
+bridge ตรวจชนิดข้อมูลและพอร์ต สร้าง NetworkClient หนึ่งตัวต่อ WebSocket แล้วเรียก `connect()` ซึ่งส่งคำสั่ง `register` เดิมให้ TCP Server คำสั่ง `connect` จึงไม่ได้ส่งไปที่ Server โดยตรง
+
+คำสั่งอื่นจาก Browser:
+
+```json
+{"type": "disconnect"}
+```
+
+```json
+{"type": "message", "to": "bob", "text": "Hello Bob!"}
+```
+
+- `disconnect` ปิด TCP Socket ของ session นั้น รอเหตุการณ์ `disconnected` แล้วปิด WebSocket
+- `message` รองรับใน bridge เพื่อใช้กติกาส่งต่อ Part 1 เดิม โดยส่งได้หลังได้รับ `registered` เท่านั้น ส่วน UI ห้องแชตจะเชื่อมในขั้นถัดไป
+- เหตุการณ์ `connected`, `registered`, `users_updated`, `error`, `message`, `sent`, `disconnected` ส่งต่อให้ Browser ผ่าน WebSocket โดย bridge ไม่สร้างรายชื่อหรือสมาชิกจำลอง
+- แต่ละแท็บมี session แยกกัน ไม่ใช้ global current user หรือ NetworkClient ร่วมกัน
+- เมื่อชื่อซ้ำ bridge ส่ง `error` ก่อนปิด TCP และส่ง `disconnected` เพื่อให้หน้าเว็บกลับมาแก้ชื่อได้
+- ปิดแท็บหรือ WebSocket หลุด จะปิด TCP Socket และหยุด workers เฉพาะ session นั้น
+- เมื่อ bridge ปิด จะปิดทุก session ที่ตัวเองดูแล ส่วน TCP Server ยังทำงาน
+- bridge bind ที่ loopback และตรวจ Origin ของ WebSocket ให้ตรงกับหน้าเว็บของตัวเอง
+- สำหรับเดโมสองเครื่องให้รัน bridge บนแต่ละเครื่อง Client แล้วเชื่อมไปยัง IP ของ TCP Server
+
+## เหตุการณ์ภายใน NetworkClient และ Tkinter เดิม
 
 `client_network.py` ใช้คิวสองทิศทาง:
 
@@ -65,6 +99,8 @@ Socket -> receiver thread -> events queue -> main thread -> widgets
 - การ connect อยู่ใน receiver thread ส่วนการ send อยู่ใน sender thread จึงไม่ให้ GUI รอเครือข่าย
 - ช่วงเชื่อมต่อหนึ่งครั้งมี main thread ของ GUI และ thread เบื้องหลังสำหรับรับและส่ง รวมสาม thread ที่แอปใช้งาน
 - เมื่อตัดการเชื่อมต่อ ใช้ Event แจ้งหยุด ปลุกคิวงานส่ง และ shutdown Socket เพื่อปลุกงานรับ โดยไม่ join รอใน callback ของ GUI
+
+สำหรับหน้าเว็บ เปลี่ยนผู้ตรวจคิว `events` จาก `after()` เป็น async task ของ bridge ซึ่งใช้ `get_nowait()` รอบละไม่เกิน 100 เหตุการณ์และ `asyncio.sleep(0.02)` เพื่อคืนเวลาให้แท็บอื่น แล้วส่ง JSON ผ่าน WebSocket ให้ JavaScript อัปเดต DOM งาน async ไม่ได้สร้าง thread ใหม่ต่อแท็บ ส่วน `NetworkClient` ยังมี worker รับ/ส่งสอง thread ตามเดิม
 
 ## ขอบเขตข้อมูลที่เตรียมไว้สำหรับขั้นถัดไป
 

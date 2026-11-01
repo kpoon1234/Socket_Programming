@@ -6,6 +6,10 @@ __pycache__/
 .venv/
 venv/
 
+# แพ็กเกจและไฟล์ CSS ที่ Tailwind สร้างใหม่ได้
+node_modules/
+/web/assets/styles.css
+
 # ข้อมูลประวัติแชตและไฟล์ที่โปรแกรมสร้างระหว่างใช้งาน
 /output/
 
