@@ -2,12 +2,14 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 from pathlib import Path
 import queue
 import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -130,13 +132,20 @@ class ServerTestCase(unittest.TestCase):
     def setUp(self):
         self.peers = []
         self.children = []
+        # ประวัติทดสอบอยู่ในโฟลเดอร์ชั่วคราว ไม่แตะประวัติที่ผู้ใช้ทดลองจริง
+        self.state_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.state_directory.cleanup)
+        self.state_path = Path(self.state_directory.name) / "chat_state.json"
+        self.start_server()
+        self.addCleanup(self.cleanup)
+
+    def start_server(self):
         # ใช้พอร์ตว่างของระบบ เพื่อไม่ชนกับ Server ที่ผู้ใช้กำลังทดลอง
         self.server = subprocess.Popen(
             [sys.executable, "-B", "-u", "-c", "import server; server.PORT = 0; server.main()"],
             cwd=PROJECT_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding="utf-8",
+            text=True, encoding="utf-8", env={**os.environ, "CHAT_STATE_PATH": str(self.state_path)},
         )
-        self.addCleanup(self.cleanup)
         self.output = ProcessOutput(self.server)
         ready = self.output.wait_for("Server listening on ")
         self.port = int(ready.rsplit(":", 1)[1])

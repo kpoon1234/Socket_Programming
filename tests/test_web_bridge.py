@@ -97,9 +97,8 @@ class WebBridgeTests(unittest.IsolatedAsyncioTestCase):
         bob = await self.registered("bob")
         carol = await self.registered("carol")
         await alice.send_json({"type": "message", "to": "bob", "text": "Hello \u0e2a\u0e27\u0e31\u0e2a\u0e14\u0e35", "from": "carol"})
-        self.assertEqual(await self.event(bob, "message"), {
-            "type": "message", "from": "alice", "to": "bob", "text": "Hello \u0e2a\u0e27\u0e31\u0e2a\u0e14\u0e35",
-        })
+        received = await self.event(bob, "private_message")
+        self.assertEqual((received["from"], received["to"], received["text"]), ("alice", "bob", "Hello \u0e2a\u0e27\u0e31\u0e2a\u0e14\u0e35"))
         self.assertEqual(await self.event(alice, "sent"), {"type": "sent", "to": "bob"})
         await carol.send_json({"type": "message", "to": "carol", "text": "probe"})
         self.assertEqual((await self.event(carol, "message"))["text"], "probe")
@@ -139,6 +138,54 @@ class WebBridgeTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Connection error", event["text"])
         alice = await self.registered("alice")
         await self.users(alice, ["alice"])
+
+    async def test_private_room_commands_echo_once_and_keep_rooms_separate(self):
+        alice, bob, carol = await self.registered("alice"), await self.registered("bob"), await self.registered("carol")
+        await alice.send_json({"type": "open_private", "to": "bob", "request_id": "open-bob"})
+        room = await self.event(alice, "room_opened")
+        self.assertEqual(room["request_id"], "open-bob")
+        await alice.send_json({"type": "open_private", "to": "carol", "request_id": "open-carol"})
+        other = await self.event(alice, "room_opened")
+        self.assertNotEqual(room["room_id"], other["room_id"])
+        await alice.send_json({"type": "private_message", "room_id": room["room_id"], "text": "Hello Bob", "request_id": "send-1", "from": "carol"})
+        opened = await self.event(bob, "room_opened")
+        self.assertEqual(opened["messages"], [])
+        incoming = await self.event(bob, "private_message")
+        own = await self.event(alice, "private_message")
+        self.assertEqual(incoming["message_id"], own["message_id"])
+        self.assertEqual(own["request_id"], "send-1")
+        self.assertEqual(own["from"], "alice")
+        self.assertEqual((await self.event(alice, "sent"))["message_id"], own["message_id"])
+        await carol.send_json({"type": "open_private", "room_id": room["room_id"], "request_id": "forged"})
+        denied = await self.event(carol, "error")
+        self.assertEqual(denied["request_id"], "forged")
+        self.assertIn("not available", denied["text"])
+        await carol.send_json({"type": "open_private", "room_id": other["room_id"], "request_id": "own-room"})
+        self.assertEqual((await self.event(carol, "room_opened"))["messages"], [])
+
+    async def test_private_history_returns_after_websocket_reconnect(self):
+        alice, bob = await self.registered("alice"), await self.registered("bob")
+        await alice.send_json({"type": "open_private", "to": "bob", "request_id": "open"})
+        room = await self.event(alice, "room_opened")
+        await alice.send_json({"type": "private_message", "room_id": room["room_id"], "text": "Remember me", "request_id": "send"})
+        await self.event(alice, "sent")
+        await bob.close()
+        await self.users(alice, ["alice"])
+        bob = await self.registered("bob")
+        restored = await self.event(bob, "private_rooms")
+        self.assertEqual([item["room_id"] for item in restored["rooms"]], [room["room_id"]])
+        await bob.send_json({"type": "open_private", "room_id": room["room_id"], "request_id": "history"})
+        self.assertEqual([item["text"] for item in (await self.event(bob, "room_opened"))["messages"]], ["Remember me"])
+
+    async def test_room_validation_error_keeps_session_connected(self):
+        alice, bob = await self.registered("alice"), await self.registered("bob")
+        await alice.send_json({"type": "open_private", "to": "bob", "request_id": "open"})
+        room = await self.event(alice, "room_opened")
+        await alice.send_json({"type": "private_message", "room_id": room["room_id"], "text": "   ", "request_id": "empty"})
+        self.assertEqual((await self.event(alice, "error"))["request_id"], "empty")
+        await alice.send_json({"type": "private_message", "room_id": room["room_id"], "text": "Valid", "request_id": "valid"})
+        self.assertEqual((await self.event(bob, "private_message"))["text"], "Valid")
+        self.assertEqual((await self.event(alice, "sent"))["request_id"], "valid")
 
 
 if __name__ == "__main__":

@@ -50,7 +50,7 @@ Client computer A: Browser A <-> WebSocket <-> Python bridge A <-> TCP <-> Serve
 Client computer B: Browser B <-> WebSocket <-> Python bridge B <-> TCP <-> Server
 ```
 
-ระหว่างพัฒนาเปิดหลายแท็บผ่าน bridge เดียวบนเครื่องเดียวได้ แต่ละแท็บมี `NetworkClient` และ TCP Socket ของตัวเอง ส่วนการเดโมข้ามเครื่องให้รัน bridge ภายในเครื่อง Client แต่ละเครื่อง แล้วกรอก IP ของ TCP Server เป็นปลายทาง พอร์ตเว็บเริ่มต้นคือ `8765` ส่วน TCP Server ใช้ `5000`
+ระหว่างพัฒนาเปิดหลายแท็บผ่าน bridge เดียวบนเครื่องเดียวได้ แต่ละแท็บมี `NetworkClient` และ TCP Socket ของตัวเอง ส่วนการเดโมข้ามเครื่องให้รัน bridge ภายในเครื่อง Client แต่ละเครื่อง แล้วกรอก IP ของ TCP Server เป็นปลายทาง พอร์ตเว็บเริ่มต้นคือ `3000` ส่วน TCP Server ใช้ `5000`
 
 ### รูปแบบหน้าจอ
 

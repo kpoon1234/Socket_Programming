@@ -24,8 +24,8 @@ class BrowserSession:
         self.forward_task = None
         self.registered = False
 
-    async def error(self, text):
-        await self.websocket.send_json({"type": "error", "text": text})
+    async def error(self, text, request_id=None):
+        await self.websocket.send_json({"type": "error", "text": text, "request_id": request_id})
 
     async def handle_command(self, command):
         if not isinstance(command, dict):
@@ -42,18 +42,23 @@ class BrowserSession:
             if not isinstance(name, str) or not name.strip():
                 raise ValueError("Enter a name.")
             self.network = NetworkClient()
-            self.network.connect(host.strip(), port, name.strip())
+            self.network.connect(host.strip(), port, name.strip(), capabilities=["private_rooms"])
             self.forward_task = asyncio.create_task(self.forward_events())
         elif command_type == "disconnect":
             if self.network is not None:
                 self.network.close()
             else:
                 await self.websocket.close()
-        elif command_type == "message":
+        elif command_type in ("message", "open_private", "private_message"):
             if not self.registered or self.network.stopped.is_set():
                 raise ValueError("Register a name before sending messages.")
-            # ใช้คำสั่งเดิมของ Part 1 โดยให้ Server ตรวจผู้รับและข้อความเอง
-            self.network.send({"type": "message", "to": command.get("to"), "text": command.get("text")})
+            # ส่งเฉพาะฟิลด์ของคำสั่ง โดยให้ Server เป็นผู้ตรวจสมาชิกและกำหนดผู้ส่งจริง
+            fields = {
+                "message": ("to", "text"),
+                "open_private": ("to", "room_id", "request_id"),
+                "private_message": ("room_id", "text", "request_id"),
+            }[command_type]
+            self.network.send({"type": command_type, **{key: command[key] for key in fields if key in command}})
         else:
             raise ValueError("Unknown browser command.")
 
@@ -101,10 +106,12 @@ async def websocket_handler(request):
     try:
         async for message in websocket:
             if message.type == WSMsgType.TEXT:
+                command = None
                 try:
-                    await session.handle_command(json.loads(message.data))
+                    command = json.loads(message.data)
+                    await session.handle_command(command)
                 except (ValueError, ConnectionError) as error:
-                    await session.error(str(error))
+                    await session.error(str(error), command.get("request_id") if isinstance(command, dict) else None)
             elif message.type == WSMsgType.BINARY:
                 await session.error("Use JSON text commands.")
     finally:

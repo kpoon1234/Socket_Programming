@@ -68,11 +68,12 @@
           </div>
         </aside>
 
-        <section class="flex min-h-105 min-w-0 flex-col md:min-h-0" aria-labelledby="room-heading">
-          <nav class="flex min-h-18 shrink-0 items-center gap-2 border-b border-line px-5 sm:px-6" aria-label="Conversations">
-            <span aria-current="page" class="rounded-lg bg-accent/80 px-4 py-2.5 text-sm font-medium">Overview</span>
+        <section class="flex min-h-105 min-w-0 flex-col md:min-h-0" aria-label="Chat workspace">
+          <nav id="room-tabs" role="tablist" class="flex min-h-18 shrink-0 items-center gap-2 overflow-x-auto border-b border-line px-5 sm:px-6" aria-label="Conversations">
+            <button id="overview-tab" type="button" role="tab" aria-selected="true" aria-controls="overview-panel" class="shrink-0 rounded-lg bg-accent/80 px-4 py-2.5 text-sm font-medium focus-visible:outline-2 focus-visible:outline-slate-300">Overview</button>
           </nav>
-          <div class="flex min-h-0 flex-1 flex-col px-5 py-5 sm:px-6">
+          <div id="room-panels" class="flex min-h-0 flex-1 flex-col">
+          <div id="overview-panel" role="tabpanel" aria-labelledby="overview-tab" class="flex min-h-0 flex-1 flex-col px-5 py-5 sm:px-6">
             <h2 id="room-heading" class="text-sm text-soft">No chat room open</h2>
             <div class="flex flex-1 flex-col items-center justify-center px-2 py-10 text-center">
               <div class="mb-5 flex size-16 items-center justify-center rounded-2xl border border-line bg-sidebar/60 text-soft" aria-hidden="true">
@@ -81,13 +82,7 @@
               <h3 class="mb-2 text-xl font-medium tracking-tight">Your conversations live here</h3>
               <p id="room-hint" class="max-w-80 text-sm leading-6 text-soft">Connect to your server to see who is online.</p>
             </div>
-            <div class="shrink-0">
-              <label for="message-input" class="mb-2 block text-sm text-soft">Message</label>
-              <div class="flex gap-3">
-                <input id="message-input" disabled placeholder="No conversation selected" class="h-12 min-w-0 flex-1 rounded-lg border border-line bg-panel px-4 text-sm placeholder:text-slate-600 disabled:cursor-not-allowed">
-                <button type="button" disabled class="rounded-lg border border-line bg-accent/30 px-5 text-sm text-soft disabled:cursor-not-allowed disabled:opacity-40">Send</button>
-              </div>
-            </div>
+          </div>
           </div>
         </section>
       </div>
@@ -95,5 +90,37 @@
         <p id="status" role="status" aria-live="polite" class="text-xs leading-5 text-soft">Ready when you are. Enter your name to connect.</p>
       </footer>
     </main>
+    <template id="private-room-template">
+      <section role="tabpanel" hidden class="flex min-h-0 flex-1 flex-col">
+        <header class="flex shrink-0 items-center justify-between gap-3 border-b border-line/60 px-5 py-4 sm:px-6">
+          <div class="min-w-0">
+            <h2 data-peer class="truncate text-base font-semibold"></h2>
+            <p class="mt-1 text-xs text-soft">Private conversation</p>
+          </div>
+          <span data-presence class="shrink-0 text-xs text-soft"></span>
+        </header>
+        <div data-history class="h-72 min-h-0 overflow-y-auto px-5 py-5 md:h-80 lg:h-auto lg:flex-1 sm:px-6" role="log" aria-live="polite" aria-relevant="additions">
+          <p data-empty class="py-10 text-center text-sm text-soft">No messages yet. Say hello!</p>
+          <div data-messages class="flex flex-col gap-4"></div>
+        </div>
+        <div class="shrink-0 border-t border-line/60 px-5 py-4 sm:px-6">
+          <p data-error role="alert" hidden class="mb-3 break-words text-sm text-rose-300"></p>
+          <div data-failed hidden class="mb-3 rounded-lg border border-rose-400/25 bg-rose-400/5 p-3">
+            <p data-failed-text class="mb-2 whitespace-pre-wrap break-words text-sm text-soft"></p>
+            <button data-restore type="button" class="text-xs text-rose-200 underline underline-offset-4">Use unsent text</button>
+          </div>
+          <form data-composer>
+            <label data-message-label class="mb-2 block text-sm text-soft">Message</label>
+            <div class="flex items-end gap-3">
+              <textarea data-input rows="2" required disabled placeholder="Write a message…" class="min-h-12 min-w-0 flex-1 resize-none rounded-lg border border-line bg-panel px-3 py-2.5 text-sm leading-6 outline-none placeholder:text-slate-600 focus:border-slate-400 focus:ring-2 focus:ring-slate-500/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
+              <button data-send type="submit" disabled class="h-12 rounded-lg border border-slate-500/40 bg-accent px-5 text-sm font-medium transition hover:bg-slate-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-300 disabled:cursor-not-allowed disabled:opacity-35">Send</button>
+            </div>
+            <div class="mt-2 flex min-h-5 flex-wrap justify-between gap-2 text-xs text-soft">
+              <span data-send-status></span><span>Enter to send · Shift+Enter for a new line</span>
+            </div>
+          </form>
+        </div>
+      </section>
+    </template>
   </body>
 </html>
