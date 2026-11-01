@@ -12,6 +12,8 @@ PORT = 5000
 clients = {}
 connections = set()
 clients_lock = threading.Lock()
+users_version = 0
+server_stopping = threading.Event()
 
 
 class ClientConnection:
@@ -22,10 +24,19 @@ class ClientConnection:
         self.name = None
         # หลาย thread อาจส่งหาคนเดียวกัน ต้องส่ง JSON ให้จบทีละข้อความ
         self.send_lock = threading.Lock()
+        self.last_users_version = -1
 
     def send(self, message):
         with self.send_lock:
             send_message(self.connection, message)
+
+    def send_users(self, message):
+        with self.send_lock:
+            # ถ้ารายการใหม่ส่งไปก่อนแล้ว ไม่ส่งรายการเก่าย้อนตามไป
+            if message["version"] <= self.last_users_version:
+                return
+            send_message(self.connection, message)
+            self.last_users_version = message["version"]
 
     def close(self):
         try:
@@ -36,16 +47,46 @@ class ClientConnection:
         self.connection.close()
 
 
-def disconnect_client(client):
+def disconnect_client(client, notify=True):
+    global users_version
+    changed = False
     with clients_lock:
         # ตรวจว่าเป็นการเชื่อมต่อเดิม ก่อนลบชื่อที่อาจมีคนเข้ามาใช้ใหม่
         if clients.get(client.name) is client:
             del clients[client.name]
+            users_version += 1
+            changed = True
         connections.discard(client)
     client.close()
+    if changed and notify:
+        broadcast_users()
+    return changed
+
+
+def broadcast_users():
+    while not server_stopping.is_set():
+        # จับภาพรายชื่อและเลขรุ่นพร้อมกัน แล้วปล่อยกุญแจก่อนส่งเครือข่าย
+        with clients_lock:
+            message = {
+                "type": "users_updated",
+                "version": users_version,
+                "users": sorted(clients),
+            }
+            recipients = list(clients.values())
+
+        changed = False
+        for recipient in recipients:
+            try:
+                recipient.send_users(message)
+            except OSError:
+                # ถ้าพบคนหลุด ให้แก้สถานะแล้ววนส่งภาพล่าสุด ไม่เรียกซ้อนกันไม่สิ้นสุด
+                changed = disconnect_client(recipient, notify=False) or changed
+        if not changed:
+            return
 
 
 def register_client(client, message):
+    global users_version
     name = message.get("name")
     if not isinstance(name, str) or not name.strip():
         client.send({"type": "error", "text": "Name must be a non-empty string."})
@@ -64,12 +105,14 @@ def register_client(client, message):
             else:
                 client.name = name
                 clients[name] = client
+                users_version += 1
                 response = {"type": "registered", "name": name}
         # ปล่อยกุญแจรายชื่อแล้ว จึงส่งข้อมูลผ่านเครือข่าย
         send_message(client.connection, response)
 
     if client.name is not None:
         print(f"Registered: {client.name}")
+        broadcast_users()
 
 
 def route_message(sender, message):
@@ -137,6 +180,7 @@ def handle_client(client, address):
 
 
 def main():
+    server_stopping.clear()
     workers = set()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -160,6 +204,7 @@ def main():
         except KeyboardInterrupt:
             print("\nStopping server...")
         finally:
+            server_stopping.set()
             with clients_lock:
                 active_connections = list(connections)
             # ปิดทั้งคนที่ลงชื่อแล้วและคนที่ยังไม่ได้ลงชื่อ โดยไม่ถือกุญแจรายชื่อ

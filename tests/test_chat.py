@@ -67,12 +67,29 @@ class Peer:
     def __init__(self, port):
         self.connection = socket.create_connection(("127.0.0.1", port), timeout=5)
         self.messages = receive_messages(self.connection)
+        self.presence_updates = []
 
     def send(self, message):
         send_message(self.connection, message)
 
     def receive(self):
-        return next(self.messages)
+        while True:
+            message = next(self.messages)
+            if message.get("type") == "users_updated":
+                self.presence_updates.append(message)
+            else:
+                return message
+
+    def wait_users(self, expected):
+        while True:
+            if self.presence_updates:
+                message = self.presence_updates.pop(0)
+            else:
+                message = next(self.messages)
+            if message.get("type") != "users_updated":
+                raise AssertionError(f"Expected a presence update, got {message}")
+            if message["users"] == sorted(expected):
+                return message
 
     def close(self):
         self.connection.close()
@@ -109,7 +126,7 @@ class ProcessOutput:
         self.process.stdout.close()
 
 
-class ChatTests(unittest.TestCase):
+class ServerTestCase(unittest.TestCase):
     def setUp(self):
         self.peers = []
         self.children = []
@@ -167,6 +184,8 @@ class ChatTests(unittest.TestCase):
         process.stdin.flush()
         return process, output
 
+
+class ChatTests(ServerTestCase):
     def test_private_routing_identity_and_unknown_recipient(self):
         alice, bob, carol = self.peer("alice"), self.peer("bob"), self.peer("carol")
         alice.send({"type": "message", "to": "bob", "text": "Hello", "from": "forged"})

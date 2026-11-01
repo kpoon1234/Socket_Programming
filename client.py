@@ -30,6 +30,7 @@ def register(client, messages):
 
 
 def receive_from_server(messages, stopped):
+    last_users_version = -1
     try:
         # หลังลงทะเบียนแล้ว มี thread นี้เพียงตัวเดียวที่อ่าน Socket
         for message in messages:
@@ -42,6 +43,10 @@ def receive_from_server(messages, stopped):
                 print(f"\n[Sent to {message['to']}]", flush=True)
             elif message_type == "error":
                 print(f"\nError: {message['text']}", flush=True)
+            elif message_type == "users_updated":
+                if message["version"] > last_users_version:
+                    last_users_version = message["version"]
+                    print(f"\nOnline users: {', '.join(message['users'])}", flush=True)
             else:
                 raise ValueError("Unexpected message type from server.")
     except (OSError, ValueError) as error:
