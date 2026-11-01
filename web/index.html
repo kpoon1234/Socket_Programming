@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en" class="h-full scheme-dark">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="A simple socket chat client for private and group conversations.">
+    <title>Socket Chat</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2339475e'/%3E%3Cpath d='M17 17h30v23H29l-12 9z' fill='none' stroke='%23e6edf7' stroke-width='4' stroke-linejoin='round'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/assets/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body class="min-h-full bg-page p-3 font-sans text-slate-100 antialiased sm:p-6 lg:p-8">
+    <main class="mx-auto flex min-h-[calc(100dvh-1.5rem)] max-w-350 flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-2xl shadow-black/15 sm:min-h-[calc(100dvh-3rem)] lg:h-[calc(100dvh-4rem)] lg:min-h-165">
+      <header class="flex min-h-20 flex-wrap items-center justify-between gap-4 border-b border-line px-5 py-4 sm:px-7">
+        <div class="flex items-center gap-3">
+          <span class="flex size-10 items-center justify-center rounded-xl border border-slate-500/30 bg-accent/40 text-slate-200" aria-hidden="true">
+            <svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 4h14a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-5 4V5a1 1 0 0 1 1-1Z" stroke-linejoin="round"/><path d="M8 9h8M8 13h5" stroke-linecap="round"/></svg>
+          </span>
+          <h1 class="text-xl font-semibold tracking-tight">Socket Chat</h1>
+        </div>
+        <div class="flex min-w-0 items-center gap-4 text-sm">
+          <span id="identity" class="max-w-48 truncate text-soft">Not connected</span>
+          <span id="connection-badge" class="flex items-center gap-2 rounded-full border border-line px-3 py-1.5 text-xs text-soft">
+            <span id="connection-dot" class="size-1.5 rounded-full bg-slate-500" aria-hidden="true"></span>
+            <span id="connection-label">Offline</span>
+          </span>
+        </div>
+      </header>
+
+      <section class="border-b border-line px-5 py-5 sm:px-7" aria-labelledby="connection-heading">
+        <h2 id="connection-heading" class="mb-3 text-xs font-semibold tracking-[0.14em] text-soft uppercase">Connection</h2>
+        <form id="connection-form" class="grid grid-cols-2 items-end gap-3 md:grid-cols-[minmax(0,1.4fr)_6rem_minmax(0,1fr)_auto_auto]">
+          <div class="col-span-2 min-w-0 md:col-span-1">
+            <label for="server-host" class="mb-1.5 block text-sm text-soft">Server address</label>
+            <input id="server-host" name="host" value="127.0.0.1" required spellcheck="false" autocomplete="off" class="h-11 w-full rounded-lg border border-line bg-page/40 px-3 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-500/20 disabled:text-slate-500">
+          </div>
+          <div>
+            <label for="server-port" class="mb-1.5 block text-sm text-soft">Port</label>
+            <input id="server-port" name="port" type="number" min="1" max="65535" step="1" value="5000" required class="h-11 w-full rounded-lg border border-line bg-page/40 px-3 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-500/20 disabled:text-slate-500">
+          </div>
+          <div class="min-w-0">
+            <label for="display-name" class="mb-1.5 block text-sm text-soft">Your name</label>
+            <input id="display-name" name="name" placeholder="e.g. Alice" required autocomplete="off" class="h-11 w-full rounded-lg border border-line bg-page/40 px-3 text-sm outline-none transition placeholder:text-slate-600 focus:border-slate-400 focus:ring-2 focus:ring-slate-500/20 disabled:text-slate-500">
+          </div>
+          <button id="connect-button" type="submit" class="h-11 rounded-lg border border-slate-500/40 bg-accent px-5 text-sm font-medium transition hover:bg-slate-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-300 disabled:cursor-not-allowed disabled:opacity-40">Connect</button>
+          <button id="disconnect-button" type="button" disabled class="h-11 rounded-lg border border-line px-4 text-sm text-slate-200 transition hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-300 disabled:cursor-not-allowed disabled:opacity-35">Disconnect</button>
+        </form>
+      </section>
+
+      <div class="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[16rem_minmax(0,1fr)] lg:grid-cols-[18rem_minmax(0,1fr)]">
+        <aside class="flex min-h-0 flex-col border-b border-line bg-sidebar md:border-r md:border-b-0">
+          <section class="flex min-h-40 flex-1 flex-col px-5 pt-6 pb-5 sm:px-6" aria-labelledby="users-heading">
+            <div class="mb-5 flex items-center justify-between gap-3">
+              <h2 id="users-heading" class="text-base font-semibold">Online users</h2>
+              <span id="user-count" class="rounded-md border border-line px-2 py-0.5 text-xs text-soft">0</span>
+            </div>
+            <p id="users-empty" class="text-sm leading-6 text-soft">Nobody online yet.<br>Connect to get started.</p>
+            <ul id="users-list" class="-mx-2 max-h-52 space-y-1 overflow-y-auto pr-1 lg:max-h-none" aria-label="Online users"></ul>
+          </section>
+          <section class="border-t border-line px-5 py-6 sm:px-6" aria-labelledby="groups-heading">
+            <h2 id="groups-heading" class="mb-3 text-base font-semibold">Groups</h2>
+            <p class="mb-5 text-sm text-soft">No groups yet</p>
+            <button type="button" disabled class="flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-line text-sm text-soft disabled:cursor-not-allowed disabled:opacity-40" title="Group creation is not available yet."><span class="text-lg" aria-hidden="true">+</span> Create group</button>
+          </section>
+          <div class="flex items-center gap-2 border-t border-line px-6 py-4 text-xs text-soft">
+            <span class="size-1.5 rounded-full bg-slate-500" aria-hidden="true"></span>
+            <span id="session-label" class="truncate">No active session</span>
+          </div>
+        </aside>
+
+        <section class="flex min-h-105 min-w-0 flex-col md:min-h-0" aria-labelledby="room-heading">
+          <nav class="flex min-h-18 shrink-0 items-center gap-2 border-b border-line px-5 sm:px-6" aria-label="Conversations">
+            <span aria-current="page" class="rounded-lg bg-accent/80 px-4 py-2.5 text-sm font-medium">Overview</span>
+          </nav>
+          <div class="flex min-h-0 flex-1 flex-col px-5 py-5 sm:px-6">
+            <h2 id="room-heading" class="text-sm text-soft">No chat room open</h2>
+            <div class="flex flex-1 flex-col items-center justify-center px-2 py-10 text-center">
+              <div class="mb-5 flex size-16 items-center justify-center rounded-2xl border border-line bg-sidebar/60 text-soft" aria-hidden="true">
+                <svg viewBox="0 0 40 40" class="size-9" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M7 7h23v17H17L7 31V7Z" stroke-linejoin="round"/><path d="M32 14h3v20l-8-6h-7M13 13h11M13 18h7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <h3 class="mb-2 text-xl font-medium tracking-tight">Your conversations live here</h3>
+              <p id="room-hint" class="max-w-80 text-sm leading-6 text-soft">Connect to your server to see who is online.</p>
+            </div>
+            <div class="shrink-0">
+              <label for="message-input" class="mb-2 block text-sm text-soft">Message</label>
+              <div class="flex gap-3">
+                <input id="message-input" disabled placeholder="No conversation selected" class="h-12 min-w-0 flex-1 rounded-lg border border-line bg-panel px-4 text-sm placeholder:text-slate-600 disabled:cursor-not-allowed">
+                <button type="button" disabled class="rounded-lg border border-line bg-accent/30 px-5 text-sm text-soft disabled:cursor-not-allowed disabled:opacity-40">Send</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+      <footer class="flex min-h-11 shrink-0 items-center border-t border-line px-5 py-2 sm:px-7">
+        <p id="status" role="status" aria-live="polite" class="text-xs leading-5 text-soft">Ready when you are. Enter your name to connect.</p>
+      </footer>
+    </main>
+  </body>
+</html>

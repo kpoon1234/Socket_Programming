@@ -1,0 +1,13 @@
+@import "tailwindcss" source(none);
+@source "./index.html";
+@source "./app.js";
+
+@theme {
+  --color-page: #191a1c;
+  --color-panel: #202226;
+  --color-sidebar: #272a30;
+  --color-line: #414751;
+  --color-soft: #a9b6c8;
+  --color-accent: #39475e;
+  --font-sans: "Segoe UI", "Noto Sans", sans-serif;
+}
