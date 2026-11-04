@@ -67,6 +67,38 @@ class WebBridgeTests(unittest.IsolatedAsyncioTestCase):
         carol = await self.registered("carol")
         self.assertEqual(await self.event(carol, "groups_updated"), snapshot)
 
+    async def test_leave_uses_self_identity_and_keeps_websocket_and_private_chat_alive(self):
+        alice, bob = await self.registered("alice"), await self.registered("bob")
+        await alice.send_json({"type": "create_group", "name": "Group", "request_id": "create"})
+        group_id = (await self.event(alice, "group_created"))["group_id"]
+        await bob.send_json({"type": "join_group", "group_id": group_id, "request_id": "join"})
+        await self.event(bob, "group_joined")
+        await bob.send_json({"type": "leave_group", "group_id": group_id, "request_id": "leave",
+                             "name": "alice", "from": "alice", "members": []})
+        left = await self.event(bob, "group_left")
+        self.assertEqual(left["request_id"], "leave")
+        self.assertFalse(left["deleted"])
+        snapshot = await self.event(bob, "groups_updated")
+        self.assertEqual(snapshot["version"], left["version"])
+        self.assertEqual(snapshot["groups"][0]["members"], ["alice"])
+        await bob.send_json({"type": "message", "to": "alice", "text": "Still here"})
+        self.assertEqual((await self.event(alice, "private_message"))["text"], "Still here")
+        await self.event(bob, "sent")
+        await alice.send_json({"type": "leave_group", "group_id": group_id, "request_id": "last"})
+        self.assertTrue((await self.event(alice, "group_left"))["deleted"])
+        self.assertEqual((await self.event(bob, "groups_updated"))["groups"], [])
+
+    async def test_leave_validation_errors_are_correlated_and_session_can_continue(self):
+        websocket = await self.client.ws_connect("/ws")
+        await websocket.send_json({"type": "leave_group", "group_id": "missing", "request_id": "early"})
+        self.assertEqual((await self.event(websocket, "error"))["request_id"], "early")
+        await websocket.send_json({"type": "connect", "host": "127.0.0.1", "port": self.fixture.port, "name": "alice"})
+        await self.event(websocket, "registered")
+        await websocket.send_json({"type": "leave_group", "group_id": "missing", "request_id": "invalid"})
+        self.assertEqual((await self.event(websocket, "error"))["request_id"], "invalid")
+        await websocket.send_json({"type": "create_group", "name": "Valid", "request_id": "valid"})
+        self.assertEqual((await self.event(websocket, "group_created"))["request_id"], "valid")
+
     async def test_invalid_group_request_keeps_browser_connected_and_echoes_request_id(self):
         websocket = await self.client.ws_connect("/ws")
         await websocket.send_json({"type": "create_group", "name": "No login", "request_id": "early"})

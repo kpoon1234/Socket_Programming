@@ -49,7 +49,7 @@ class BrowserSession:
                 self.network.close()
             else:
                 await self.websocket.close()
-        elif command_type in ("message", "open_private", "private_message", "create_group", "join_group", "open_group", "group_message"):
+        elif command_type in ("message", "open_private", "private_message", "create_group", "join_group", "leave_group", "open_group", "group_message"):
             if not self.registered or self.network.stopped.is_set():
                 raise ValueError("Register a name before sending messages.")
             # ส่งเฉพาะฟิลด์ของคำสั่ง โดยให้ Server เป็นผู้ตรวจสมาชิกและกำหนดผู้ส่งจริง
@@ -59,6 +59,7 @@ class BrowserSession:
                 "private_message": ("room_id", "text", "request_id"),
                 "create_group": ("name", "request_id"),
                 "join_group": ("group_id", "request_id"),
+                "leave_group": ("group_id", "request_id"),
                 "open_group": ("group_id", "request_id"),
                 "group_message": ("group_id", "text", "request_id"),
             }[command_type]

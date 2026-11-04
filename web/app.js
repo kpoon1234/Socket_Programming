@@ -13,6 +13,8 @@ const usersList = document.querySelector("#users-list");
 const rooms = new Map();
 const groupRooms = new Map();
 const pendingJoins = new Map();
+const pendingLeaves = new Map();
+const departedGroups = new Set();
 const joinErrors = new Map();
 const requests = new Map();
 const roomTabs = document.querySelector("#room-tabs");
@@ -25,6 +27,7 @@ const groupNameInput = document.querySelector("#group-name");
 const groupSubmit = document.querySelector("#group-submit");
 const groupCancel = document.querySelector("#group-cancel");
 const groupError = document.querySelector("#group-error");
+const leaveDialog = document.querySelector("#leave-dialog");
 
 let socket = null;
 let currentName = null;
@@ -38,6 +41,7 @@ let lastGroupsVersion = -1;
 let pendingGroupRequest = null;
 let currentGroups = [];
 let lastJoinRequestId = null;
+let leaveTargetId = null;
 
 function setStatus(text, state) {
   statusText.textContent = text;
@@ -61,6 +65,8 @@ function setBusy(busy) {
 }
 
 function clearSession() {
+  leaveDialog.close();
+  leaveTargetId = null;
   currentName = null;
   lastUsersVersion = -1;
   lastGroupsVersion = -1;
@@ -68,6 +74,8 @@ function clearSession() {
   currentGroups = [];
   lastJoinRequestId = null;
   pendingJoins.clear();
+  pendingLeaves.clear();
+  departedGroups.clear();
   joinErrors.clear();
   groupsList.replaceChildren();
   document.querySelector("#group-count").textContent = "0";
@@ -129,6 +137,26 @@ function renderUsers(users) {
   document.querySelector("#user-count").textContent = String(users.length);
   document.querySelector("#users-empty").hidden = users.length > 0;
   for (const room of rooms.values()) updateRoomControls(room);
+  updateGroupPresence();
+}
+
+function formatGroupMember(name) {
+  return `${name}${name === currentName ? " (you)" : ""} · ${onlineUsers.includes(name) ? "Online" : "Offline"}`;
+}
+
+function updateGroupMemberLabels(room) {
+  const members = room.members.map(formatGroupMember).join(", ");
+  const label = room.panel.querySelector("[data-group-members]");
+  label.textContent = `Members: ${members}`;
+  label.title = members;
+}
+
+function updateGroupPresence() {
+  for (const group of currentGroups) {
+    const label = groupsList.querySelector(`[data-group-card-members="${CSS.escape(group.group_id)}"]`);
+    if (label) label.textContent = `Members: ${group.members.map(formatGroupMember).join(", ")}`;
+  }
+  for (const room of groupRooms.values()) updateGroupMemberLabels(room);
 }
 
 function updateGroupControls() {
@@ -155,23 +183,21 @@ function renderGroups() {
     const title = document.createElement("h3");
     title.className = "break-words text-sm font-medium";
     title.textContent = group.name;
-    const id = document.createElement("p");
-    id.className = "mt-1 break-all font-mono text-[10px] leading-4 text-soft";
-    id.textContent = `ID: ${group.group_id}`;
     const members = document.createElement("p");
     members.className = "mt-1 break-words text-xs leading-5 text-soft";
-    members.textContent = `Members: ${group.members.join(", ")}`;
+    members.dataset.groupCardMembers = group.group_id;
+    members.textContent = `Members: ${group.members.map(formatGroupMember).join(", ")}`;
     const membership = document.createElement("p");
     const isMember = group.members.includes(currentName);
     membership.className = isMember ? "mt-1 text-xs text-emerald-300" : "mt-1 text-xs text-soft";
     membership.textContent = isMember ? "You are a member" : "Not joined";
-    card.append(title, id, members, membership);
+    card.append(title, members, membership);
     const action = document.createElement("button");
     action.type = "button";
     action.className = "mt-3 h-9 w-full rounded-lg border border-line bg-accent/30 px-3 text-xs font-medium transition hover:bg-accent focus-visible:outline-2 focus-visible:outline-slate-300 disabled:cursor-not-allowed disabled:opacity-50";
-    action.disabled = currentName === null || pendingJoins.has(group.group_id);
-    action.textContent = pendingJoins.has(group.group_id) ? "Joining…" : isMember ? "Open group" : "Join";
-    action.setAttribute("aria-label", `${isMember ? "Open group" : "Join"} ${group.name} (${group.group_id})`);
+    action.disabled = currentName === null || pendingJoins.has(group.group_id) || pendingLeaves.has(group.group_id);
+    action.textContent = pendingLeaves.has(group.group_id) ? "Leaving…" : pendingJoins.has(group.group_id) ? "Joining…" : isMember ? "Open group" : "Join";
+    action.setAttribute("aria-label", `${isMember ? "Open group" : "Join"} ${group.name}`);
     action.addEventListener("click", () => {
       lastOpenRequestId = null;
       lastJoinRequestId = null;
@@ -234,13 +260,11 @@ function ensureGroupRoom(group) {
   room.name = group.name;
   room.members = group.members;
   room.title.textContent = `# ${group.name}`;
-  room.tab.title = `${group.name} (${group.group_id})`;
-  room.tab.setAttribute("aria-label", `Group ${group.name} (${group.group_id})`);
+  room.tab.title = group.name;
+  room.tab.setAttribute("aria-label", `Group ${group.name}`);
   room.panel.querySelector("[data-group-name]").textContent = group.name;
-  room.panel.querySelector("[data-group-id]").textContent = group.group_id;
-  const members = group.members.map((name) => name === currentName ? `${name} (you)` : name).join(", ");
-  room.panel.querySelector("[data-group-members]").textContent = `Members: ${members}`;
-  room.panel.querySelector("[data-group-members]").title = members;
+  updateGroupMemberLabels(room);
+  room.leave.setAttribute("aria-label", `Leave group ${group.name}`);
   updateRoomControls(room);
   return room;
 }
@@ -249,7 +273,7 @@ function openGroup(groupId) {
   lastOpenRequestId = null;
   lastJoinRequestId = null;
   const room = groupRooms.get(groupId);
-  if (!room) return;
+  if (!room || pendingLeaves.has(groupId)) return;
   selectRoom(groupId);
   if (room.loaded) return;
   lastOpenRequestId = sendCommand({ type: "open_group", group_id: groupId }, { kind: "open_group", roomId: groupId });
@@ -266,6 +290,7 @@ function completeGroupJoins() {
     pendingJoins.delete(groupId);
     requests.delete(requestId);
     joinErrors.delete(groupId);
+    updateRoomControls(groupRooms.get(groupId));
     if (requestId === lastJoinRequestId) {
       openGroup(groupId);
       groupRooms.get(groupId).tab.focus();
@@ -273,6 +298,85 @@ function completeGroupJoins() {
     }
     setStatus(`Joined ${group.name}.`, "Online");
   }
+}
+
+function requestLeave(room) {
+  updateRoomControls(room);
+  if (room.leave.disabled) return;
+  leaveTargetId = room.group_id;
+  document.querySelector("#leave-target").textContent = room.name;
+  leaveDialog.showModal();
+}
+
+function confirmGroupLeave() {
+  const room = groupRooms.get(leaveTargetId);
+  leaveDialog.close();
+  leaveTargetId = null;
+  if (!room) return;
+  updateRoomControls(room);
+  if (room.leave.disabled) return;
+  const requestId = sendCommand({ type: "leave_group", group_id: room.group_id }, {
+    kind: "leave_group", roomId: room.group_id, confirmed: false, version: null,
+  });
+  if (requestId === null) return;
+  lastOpenRequestId = null;
+  lastJoinRequestId = null;
+  pendingLeaves.set(room.group_id, requestId);
+  room.error.hidden = true;
+  updateRoomControls(room);
+  renderGroups();
+}
+
+function removeGroupRoom(groupId) {
+  departedGroups.add(groupId);
+  if (leaveTargetId === groupId) {
+    leaveDialog.close();
+    leaveTargetId = null;
+  }
+  const room = groupRooms.get(groupId);
+  if (!room) return;
+  const selected = activeRoomId === groupId;
+  room.messages.clear();
+  room.input.value = "";
+  room.failedText = null;
+  room.tab.remove();
+  room.panel.remove();
+  groupRooms.delete(groupId);
+  for (const [requestId, request] of requests) {
+    if (request.roomId === groupId && request.kind !== "leave_group") requests.delete(requestId);
+  }
+  if (selected) {
+    selectRoom(null);
+    overviewTab.focus();
+  }
+}
+
+function completeGroupLeaves() {
+  for (const [groupId, requestId] of pendingLeaves) {
+    const request = requests.get(requestId);
+    const group = currentGroups.find((item) => item.group_id === groupId);
+    // คำตอบ Leave อาจมาถึงก่อน snapshot เก่า ต้องรอ version ที่ยืนยันการออกจริง
+    if (!request?.confirmed || lastGroupsVersion < request.version || group?.members.includes(currentName)) continue;
+    pendingLeaves.delete(groupId);
+    requests.delete(requestId);
+    setStatus(request.deleted ? "Group and its history deleted." : "Left the group.", "Online");
+  }
+}
+
+function syncGroupRooms() {
+  for (const groupId of groupRooms.keys()) {
+    const group = currentGroups.find((item) => item.group_id === groupId);
+    if (!group?.members.includes(currentName)) removeGroupRoom(groupId);
+  }
+  for (const group of currentGroups) {
+    if (!group.members.includes(currentName)) continue;
+    const leave = requests.get(pendingLeaves.get(group.group_id));
+    if (leave?.confirmed && lastGroupsVersion < leave.version) continue;
+    departedGroups.delete(group.group_id);
+    ensureGroupRoom(group);
+  }
+  completeGroupJoins();
+  completeGroupLeaves();
 }
 
 function sendCommand(command, context) {
@@ -304,11 +408,16 @@ function openPrivate(target) {
 function updateRoomControls(room) {
   const isGroup = room.kind === "group";
   const available = currentName !== null && (isGroup ? room.members.includes(currentName) : onlineUsers.includes(room.peer));
+  const leaving = isGroup && pendingLeaves.has(room.group_id);
   room.presence.textContent = isGroup ? `${room.members.length} ${room.members.length === 1 ? "member" : "members"}` : available ? "Online" : "Offline";
   room.presence.classList.toggle("text-emerald-300", available);
-  room.input.disabled = !available || !room.loaded;
+  room.input.disabled = !available || !room.loaded || leaving;
   room.input.placeholder = !room.loaded ? "Loading conversation…" : available ? "Write a message…" : isGroup ? "You are not a member" : `${room.peer} is offline`;
   room.send.disabled = room.input.disabled || room.pending !== null || !room.input.value.trim();
+  if (isGroup) {
+    room.leave.disabled = !available || leaving || pendingJoins.has(room.group_id) || room.pending !== null;
+    room.leave.textContent = leaving ? "Leaving…" : "Leave group";
+  }
 }
 
 function roomKey(room) {
@@ -378,7 +487,9 @@ function initializeComposer(room) {
     empty: panel.querySelector("[data-empty]"), error: panel.querySelector("[data-error]"),
     presence: panel.querySelector("[data-presence]"), status: panel.querySelector("[data-send-status]"),
     failed: panel.querySelector("[data-failed]"), failedText: null,
+    leave: panel.querySelector("[data-leave]"),
   });
+  room.leave?.addEventListener("click", () => requestLeave(room));
   room.input.id = `message-${roomKey(room)}`;
   panel.querySelector("[data-message-label]").htmlFor = room.input.id;
   panel.querySelector("[data-composer]").addEventListener("submit", (event) => {
@@ -484,6 +595,10 @@ function handlePrivateMessage(event) {
 }
 
 function handleGroupOpened(event) {
+  if (departedGroups.has(event.group_id) && !pendingJoins.has(event.group_id)) {
+    requests.delete(event.request_id);
+    return;
+  }
   const room = ensureGroupRoom(event);
   room.loaded = true;
   room.empty.textContent = "No messages since you joined. Say hello!";
@@ -496,6 +611,7 @@ function handleGroupOpened(event) {
 }
 
 function handleGroupMessage(event) {
+  if (departedGroups.has(event.group_id) && !pendingJoins.has(event.group_id)) return;
   const room = groupRooms.get(event.group_id);
   if (!room) return;
   const added = mergeMessages(room, [event]);
@@ -508,6 +624,10 @@ function handleGroupMessage(event) {
 
 function handleRequestError(event) {
   const request = requests.get(event.request_id);
+  if (request?.kind === "leave_group") {
+    pendingLeaves.delete(request.roomId);
+    renderGroups();
+  }
   if (request?.kind === "join_group" && pendingJoins.get(request.groupId) === event.request_id) {
     pendingJoins.delete(request.groupId);
     joinErrors.set(request.groupId, event.text);
@@ -533,7 +653,7 @@ function handleRequestError(event) {
         room.panel.querySelector("[data-failed-text]").textContent = request.text;
         room.failed.hidden = false;
       }
-    } else {
+    } else if (request.kind === "open" || request.kind === "open_group") {
       room.empty.textContent = "Could not load this conversation. Select the tab to retry.";
     }
     updateRoomControls(room);
@@ -569,13 +689,20 @@ function handleEvent(event) {
       if (event.version > lastGroupsVersion) {
         lastGroupsVersion = event.version;
         currentGroups = event.groups;
-        for (const group of currentGroups) {
-          if (group.members.includes(currentName)) ensureGroupRoom(group);
-        }
-        completeGroupJoins();
+        syncGroupRooms();
         renderGroups();
       }
       break;
+    case "group_left": {
+      const request = requests.get(event.request_id);
+      if (request?.kind === "leave_group" && request.roomId === event.group_id) {
+        Object.assign(request, { confirmed: true, version: event.version, deleted: event.deleted });
+        removeGroupRoom(event.group_id);
+        completeGroupLeaves();
+        renderGroups();
+      }
+      break;
+    }
     case "group_joined": {
       const request = requests.get(event.request_id);
       if (request?.kind === "join_group" && request.groupId === event.group_id) {
@@ -637,6 +764,8 @@ function handleEvent(event) {
 }
 
 createGroupButton.addEventListener("click", () => showGroupForm(groupForm.hidden));
+document.querySelector("#leave-confirm").addEventListener("click", confirmGroupLeave);
+leaveDialog.addEventListener("close", () => { leaveTargetId = null; });
 groupCancel.addEventListener("click", () => {
   groupForm.reset();
   groupError.hidden = true;

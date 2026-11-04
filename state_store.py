@@ -161,6 +161,21 @@ class ChatStateStore:
             self.groups_version += 1
             return deepcopy(data["groups"][group_id])
 
+    def leave_group(self, group_id, name):
+        with self.lock:
+            self.group_for_member(group_id, name)
+            data = deepcopy(self.data)
+            members = data["groups"][group_id]["members"]
+            members.remove(name)
+            deleted = not members
+            if deleted:
+                del data["groups"][group_id]
+                # ลบเฉพาะประวัติของกลุ่มที่ว่าง ในการบันทึกครั้งเดียวกับการลบกลุ่ม
+                data["group_messages"] = [item for item in data["group_messages"] if item["group_id"] != group_id]
+            self.save(data)
+            self.groups_version += 1
+            return {"group_id": group_id, "deleted": deleted, "version": self.groups_version}
+
     def group_for_member(self, group_id, name):
         # เรียกขณะถือ self.lock เพื่อให้การตรวจสมาชิกกับการอ่าน/เพิ่มข้อความเป็นงานเดียวกัน
         if not isinstance(group_id, str) or not group_id.strip():

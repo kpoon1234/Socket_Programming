@@ -88,6 +88,12 @@ class ClientConnection:
             send_message(self.connection, {"type": "group_opened", **group, "request_id": request_id})
             self.announced_groups.add(group["group_id"])
 
+    def send_group_left(self, result, request_id):
+        with self.send_lock:
+            # เมื่อ Join กลับ ต้องประกาศห้องพร้อมประวัติที่มีสิทธิ์ใหม่อีกครั้ง
+            self.announced_groups.discard(result["group_id"])
+            send_message(self.connection, {"type": "group_left", **result, "request_id": request_id})
+
     def send_group(self, group, message, request_id=None):
         with self.send_lock:
             if group["group_id"] not in self.announced_groups:
@@ -220,12 +226,30 @@ def create_group(sender, message):
 
 def join_group(sender, message):
     request_id = request_id_for(message)
-    # อนุญาตให้เข้าร่วมได้เฉพาะชื่อตัวเอง ไม่ใช้ name หรือ members ที่แนบมา
-    group = chat_state.join_group(message.get("group_id"), sender.name)
-    try:
-        sender.send({"type": "group_joined", "request_id": request_id, "group_id": group["group_id"]})
-    finally:
-        broadcast_groups()
+    group_id = message.get("group_id")
+    if not isinstance(group_id, str) or not group_id.strip():
+        raise ValueError("A non-empty group_id is required.")
+    with room_lock(group_id):
+        # อนุญาตให้เข้าร่วมได้เฉพาะชื่อตัวเอง ไม่ใช้ name หรือ members ที่แนบมา
+        group = chat_state.join_group(group_id, sender.name)
+        try:
+            sender.send({"type": "group_joined", "request_id": request_id, "group_id": group["group_id"]})
+        finally:
+            broadcast_groups()
+
+
+def leave_group(sender, message):
+    request_id = request_id_for(message)
+    group_id = message.get("group_id")
+    if not isinstance(group_id, str) or not group_id.strip():
+        raise ValueError("A non-empty group_id is required.")
+    # ล็อกเดียวกับ Join/Open/Send ให้ข้อความก่อนออกส่งจบก่อนตอบว่า Leave สำเร็จ
+    with room_lock(group_id):
+        result = chat_state.leave_group(group_id, sender.name)
+        try:
+            sender.send_group_left(result, request_id)
+        finally:
+            broadcast_groups()
 
 
 def open_group(sender, message):
@@ -376,12 +400,14 @@ def handle_client(client, address):
                     client.send({"type": "error", "text": "Register a name before sending messages."})
             elif message_type == "message":
                 route_message(client, message)
-            elif message_type in ("create_group", "join_group"):
+            elif message_type in ("create_group", "join_group", "leave_group"):
                 try:
                     if message_type == "create_group":
                         create_group(client, message)
-                    else:
+                    elif message_type == "join_group":
                         join_group(client, message)
+                    else:
+                        leave_group(client, message)
                 except (ValueError, OSError) as error:
                     client.send({"type": "error", "request_id": message.get("request_id"), "text": str(error)})
             elif message_type in ("open_private", "private_message"):

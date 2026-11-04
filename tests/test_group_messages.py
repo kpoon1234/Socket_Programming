@@ -14,7 +14,7 @@ from state_store import ChatStateStore
 from test_chat import ChunkConnection, ServerTestCase
 
 
-class GroupMessageTests(ServerTestCase):
+class GroupPeerHelpers:
     def event(self, peer, kind, predicate=lambda item: True):
         while True:
             event = peer.receive()
@@ -54,6 +54,8 @@ class GroupMessageTests(ServerTestCase):
         self.assertEqual(acknowledgement["request_id"], "send")
         return {key: value for key, value in message.items() if key != "request_id"}
 
+
+class GroupMessageTests(GroupPeerHelpers, ServerTestCase):
     def test_live_echo_identity_and_history_exclude_messages_before_join(self):
         alice, bob, carol = [self.member(name) for name in ("alice", "bob", "carol")]
         group_id = self.create(alice)
