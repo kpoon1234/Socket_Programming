@@ -1,4 +1,4 @@
-"""Keep private rooms and messages in an atomically replaced JSON file."""
+"""Keep rooms, groups, and messages in an atomically replaced JSON file."""
 
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -14,10 +14,14 @@ class ChatStateStore:
     def __init__(self, path):
         self.path = Path(path)
         self.lock = threading.Lock()
-        self.data = {"schema_version": 1, "groups": {}, "private_rooms": {}, "messages": []}
+        self.groups_version = 0
+        self.data = {"schema_version": 1, "groups": {}, "private_rooms": {}, "messages": [], "group_messages": []}
         if self.path.exists():
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
+                # ไฟล์ก่อน Step 6 ยังไม่มีข้อความกลุ่ม ให้เติมเฉพาะช่องใหม่โดยเก็บข้อมูลเดิม
+                if isinstance(data, dict):
+                    data.setdefault("group_messages", [])
                 self.validate(data)
             except (ValueError, KeyError, TypeError) as error:
                 raise ValueError(f"Invalid chat state in {self.path}: {error}") from error
@@ -31,6 +35,16 @@ class ChatStateStore:
             raise ValueError("Rooms and groups must be objects.")
         if not isinstance(data.get("messages"), list):
             raise ValueError("Messages must be a list.")
+        for group_id, group in data["groups"].items():
+            if not isinstance(group_id, str) or not group_id or not isinstance(group, dict) or group.get("group_id") != group_id:
+                raise ValueError("Invalid group ID.")
+            if not all(isinstance(group.get(key), str) and group[key].strip() for key in ("name", "creator")):
+                raise ValueError("A group must have a name and creator.")
+            members = group.get("members")
+            if not isinstance(members, list) or not members or not all(isinstance(name, str) and name.strip() for name in members):
+                raise ValueError("A group must have named members.")
+            if len(set(members)) != len(members):
+                raise ValueError("Duplicate group member.")
         pairs = set()
         for room_id, room in data["private_rooms"].items():
             if not isinstance(room, dict) or room.get("room_id") != room_id or room.get("kind") != "private":
@@ -63,6 +77,33 @@ class ChatStateStore:
             sequences[message["room_id"]] = sequence
             message_ids.add(identifier)
 
+        if not isinstance(data.get("group_messages"), list):
+            raise ValueError("Group messages must be a list.")
+        sequences = {}
+        for message in data["group_messages"]:
+            if not isinstance(message, dict):
+                raise ValueError("Invalid group message record.")
+            group_id = message.get("group_id")
+            if not isinstance(group_id, str) or group_id not in data["groups"]:
+                raise ValueError("A group message must belong to its group.")
+            audience = message.get("visible_to")
+            if not isinstance(audience, list) or not audience or not all(isinstance(name, str) and name.strip() for name in audience):
+                raise ValueError("A group message must have an audience.")
+            if len(set(audience)) != len(audience) or message.get("from") not in audience:
+                raise ValueError("Invalid group message audience.")
+            identifier = message.get("message_id")
+            if not isinstance(identifier, str) or not identifier or identifier in message_ids:
+                raise ValueError("Invalid or duplicate message ID.")
+            if message.get("type") != "group_message" or not isinstance(message.get("text"), str) or not message["text"].strip():
+                raise ValueError("Invalid group message content.")
+            sequence = sequences.get(group_id, 0) + 1
+            if type(message.get("sequence")) is not int or message["sequence"] != sequence:
+                raise ValueError("Invalid group message sequence.")
+            if not isinstance(message.get("timestamp"), str):
+                raise ValueError("A group message must have a timestamp.")
+            sequences[group_id] = sequence
+            message_ids.add(identifier)
+
     def save(self, data):
         # เขียนไฟล์ใหม่ให้ครบก่อนแทนไฟล์เดิม และเปลี่ยนข้อมูลในหน่วยความจำเมื่อบันทึกสำเร็จ
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,6 +120,99 @@ class ChatStateStore:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
         self.data = data
+
+    def groups_snapshot(self):
+        with self.lock:
+            # อ่านเลขรุ่นกับรายการพร้อมกัน เพื่อไม่ให้เลขรุ่นใหม่ติดไปกับข้อมูลเก่า
+            return {"type": "groups_updated", "version": self.groups_version,
+                    "groups": deepcopy(list(self.data["groups"].values()))}
+
+    def create_group(self, name, creator):
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Group name must not be empty.")
+        if not isinstance(creator, str) or not creator.strip():
+            raise ValueError("A registered creator is required.")
+        with self.lock:
+            group_id = f"group_{uuid.uuid4().hex}"
+            group = {"group_id": group_id, "name": name.strip(),
+                     "creator": creator, "members": [creator]}
+            data = deepcopy(self.data)
+            data["groups"][group_id] = group
+            self.save(data)
+            # เพิ่มรุ่นเมื่อบันทึกสำเร็จเท่านั้น และเริ่มนับใหม่เมื่อเปิด Server รอบใหม่
+            self.groups_version += 1
+            return deepcopy(group)
+
+    def join_group(self, group_id, name):
+        if not isinstance(group_id, str) or not group_id.strip():
+            raise ValueError("A non-empty group_id is required.")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("A registered member is required.")
+        with self.lock:
+            group = self.data["groups"].get(group_id)
+            if group is None:
+                raise ValueError("Group does not exist.")
+            # กด Join ซ้ำหรือกลับมาใช้ชื่อเดิม ไม่เพิ่มสมาชิกและไม่เขียนไฟล์ซ้ำ
+            if name in group["members"]:
+                return deepcopy(group)
+            data = deepcopy(self.data)
+            data["groups"][group_id]["members"].append(name)
+            self.save(data)
+            self.groups_version += 1
+            return deepcopy(data["groups"][group_id])
+
+    def leave_group(self, group_id, name):
+        with self.lock:
+            self.group_for_member(group_id, name)
+            data = deepcopy(self.data)
+            members = data["groups"][group_id]["members"]
+            members.remove(name)
+            deleted = not members
+            if deleted:
+                del data["groups"][group_id]
+                # ลบเฉพาะประวัติของกลุ่มที่ว่าง ในการบันทึกครั้งเดียวกับการลบกลุ่ม
+                data["group_messages"] = [item for item in data["group_messages"] if item["group_id"] != group_id]
+            self.save(data)
+            self.groups_version += 1
+            return {"group_id": group_id, "deleted": deleted, "version": self.groups_version}
+
+    def group_for_member(self, group_id, name):
+        # เรียกขณะถือ self.lock เพื่อให้การตรวจสมาชิกกับการอ่าน/เพิ่มข้อความเป็นงานเดียวกัน
+        if not isinstance(group_id, str) or not group_id.strip():
+            raise ValueError("A non-empty group_id is required.")
+        group = self.data["groups"].get(group_id)
+        if group is None or name not in group["members"]:
+            raise ValueError("This group is not available to you.")
+        return group
+
+    @staticmethod
+    def public_group_message(message):
+        return {key: deepcopy(value) for key, value in message.items() if key != "visible_to"}
+
+    def group_snapshot(self, group_id, name):
+        with self.lock:
+            group = self.group_for_member(group_id, name)
+            history = [self.public_group_message(item) for item in self.data["group_messages"]
+                       if item["group_id"] == group_id and name in item["visible_to"]]
+            return {**deepcopy(group), "messages": history}
+
+    def append_group_message(self, group_id, sender, text):
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("Message must not be empty.")
+        with self.lock:
+            group = self.group_for_member(group_id, sender)
+            sequence = sum(item["group_id"] == group_id for item in self.data["group_messages"]) + 1
+            message = {
+                "type": "group_message", "message_id": f"message_{uuid.uuid4().hex}",
+                "group_id": group_id, "sequence": sequence, "from": sender, "text": text,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                # ตรึงสิทธิ์ขณะส่ง รวมสมาชิกออฟไลน์ คนที่ Join ทีหลังจะไม่ได้ประวัตินี้
+                "visible_to": list(group["members"]),
+            }
+            data = deepcopy(self.data)
+            data["group_messages"].append(message)
+            self.save(data)
+            return deepcopy(message)
 
     def list_rooms(self, name):
         with self.lock:

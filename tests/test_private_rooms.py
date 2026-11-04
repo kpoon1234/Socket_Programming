@@ -111,21 +111,23 @@ class PrivateRoomTests(ServerTestCase):
         self.assertEqual(received[0], received[1])
         self.assertEqual(len(set(received[0])), 20)
 
-    def test_legacy_terminal_and_web_clients_share_one_persisted_room(self):
+    def test_basic_protocol_and_web_clients_share_one_persisted_room(self):
         alice = self.peer("alice")
         bob, _ = self.room_peer("bob")
-        alice.send({"type": "message", "to": "bob", "text": "From terminal"})
+        alice.send({"type": "message", "to": "bob", "text": "From basic protocol"})
         first = self.event(bob, "private_message")
         self.assertEqual(alice.receive(), {"type": "sent", "to": "bob"})
         bob.send({"type": "private_message", "room_id": first["room_id"], "text": "From web", "request_id": "reply"})
         self.assertEqual(alice.receive(), {"type": "message", "from": "bob", "to": "alice", "text": "From web"})
         self.event(bob, "sent")
-        self.assertEqual([item["text"] for item in self.open_room(bob, "alice")["messages"]], ["From terminal", "From web"])
+        self.assertEqual([item["text"] for item in self.open_room(bob, "alice")["messages"]], ["From basic protocol", "From web"])
 
     def test_empty_invalid_and_offline_sends_do_not_add_history(self):
         alice, _ = self.room_peer("alice")
         bob, _ = self.room_peer("bob")
         room = self.open_room(alice, "bob")
+        # ระบายรายชื่อเก่าตอน alice อยู่คนเดียว ก่อนรอเหตุการณ์ที่ bob หลุดจริง
+        alice.wait_users(["alice", "bob"])
         for text in ("", "  \n", None, 42):
             alice.send({"type": "private_message", "room_id": room["room_id"], "text": text, "request_id": "invalid"})
             self.assertEqual(alice.receive()["type"], "error")

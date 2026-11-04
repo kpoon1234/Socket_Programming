@@ -22,6 +22,7 @@ class NetworkClient:
         self.sender = None
         self.name = None
         self.last_users_version = -1
+        self.last_groups_version = -1
         self.reason = "Server disconnected."
         self.intentional = False
 
@@ -80,6 +81,16 @@ class NetworkClient:
                     if version <= self.last_users_version:
                         continue
                     self.last_users_version = version
+                elif message.get("type") == "groups_updated":
+                    version = message.get("version")
+                    groups = message.get("groups")
+                    if type(version) is not int or version < 0:
+                        raise ValueError("Invalid groups version.")
+                    if not isinstance(groups, list) or not all(isinstance(group, dict) for group in groups):
+                        raise ValueError("Invalid groups list.")
+                    if version <= self.last_groups_version:
+                        continue
+                    self.last_groups_version = version
                 self.events.put(message)
         except (OSError, ValueError) as error:
             reason = f"Connection error: {error}"

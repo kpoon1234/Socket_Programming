@@ -131,7 +131,6 @@ class ProcessOutput:
 class ServerTestCase(unittest.TestCase):
     def setUp(self):
         self.peers = []
-        self.children = []
         # ประวัติทดสอบอยู่ในโฟลเดอร์ชั่วคราว ไม่แตะประวัติที่ผู้ใช้ทดลองจริง
         self.state_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.state_directory.cleanup)
@@ -151,16 +150,6 @@ class ServerTestCase(unittest.TestCase):
         self.port = int(ready.rsplit(":", 1)[1])
 
     def cleanup(self):
-        for process, output in self.children:
-            if process.poll() is None:
-                process.terminate()
-                process.wait(timeout=5)
-            if process.stdin:
-                try:
-                    process.stdin.close()
-                except BrokenPipeError:
-                    pass
-            output.finish()
         for peer in self.peers:
             peer.close()
         if self.server.poll() is None:
@@ -180,18 +169,6 @@ class ServerTestCase(unittest.TestCase):
             peer.send({"type": "register", "name": name})
             self.assertEqual(peer.receive(), {"type": "registered", "name": name.strip()})
         return peer
-
-    def cli(self, input_text):
-        process = subprocess.Popen(
-            [sys.executable, "-B", "-u", "-c", f"import client; client.PORT = {self.port}; client.main()"],
-            cwd=PROJECT_ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-        )
-        output = ProcessOutput(process)
-        self.children.append((process, output))
-        process.stdin.write(input_text)
-        process.stdin.flush()
-        return process, output
 
 
 class ChatTests(ServerTestCase):
@@ -281,50 +258,14 @@ class ChatTests(ServerTestCase):
             self.assertEqual(alice.receive()["type"], "error")
         self.assertIsNone(self.server.poll())
 
-    def test_cli_receives_while_waiting_for_recipient_and_message(self):
-        bob = self.peer("bob")
-        process, output = self.cli("alice\n")
-        output.wait_for("Registered as alice.")
-        bob.send({"type": "message", "to": "alice", "text": "Waiting for recipient"})
-        self.assertEqual(bob.receive()["type"], "sent")
-        output.wait_for("[bob -> alice] Waiting for recipient")
-        process.stdin.write("bob\n")
-        process.stdin.flush()
-        bob.send({"type": "message", "to": "alice", "text": "Waiting for message"})
-        self.assertEqual(bob.receive()["type"], "sent")
-        output.wait_for("[bob -> alice] Waiting for message")
-        process.stdin.write("Hello Bob\n")
-        process.stdin.flush()
-        self.assertEqual(bob.receive()["text"], "Hello Bob")
-        output.wait_for("[Sent to bob]")
-        process.stdin.write("/quit\n")
-        process.stdin.flush()
-        self.assertEqual(process.wait(timeout=5), 0)
-        self.output.wait_for("Client disconnected: alice")
-        self.assertIsNone(self.server.poll())
-
-    def test_cli_retries_a_duplicate_name(self):
-        self.peer("alice")
-        process, output = self.cli("alice\ncharlie\n/quit\n")
-        output.wait_for("Name is already in use")
-        output.wait_for("Registered as charlie.")
-        self.assertEqual(process.wait(timeout=5), 0)
-
     def test_shutdown_closes_registered_and_unregistered_clients(self):
         pending = self.peer()
-        process, output = self.cli("alice\n")
-        output.wait_for("Registered as alice.")
+        registered = self.peer("alice")
+        registered.wait_users(["alice"])
         self.server.send_signal(signal.SIGINT)
         self.assertEqual(self.server.wait(timeout=5), 0)
-        output.wait_for("Server disconnected. Press Enter to exit.")
         self.assertEqual(pending.connection.recv(1), b"")
-        try:
-            # ถ้า Client เห็นการปิดก่อนเข้า input อาจออกได้เองโดยไม่ต้องรอ Enter
-            process.stdin.write("\n")
-            process.stdin.flush()
-        except BrokenPipeError:
-            pass
-        self.assertEqual(process.wait(timeout=5), 0)
+        self.assertEqual(registered.connection.recv(1), b"")
 
 
 if __name__ == "__main__":
