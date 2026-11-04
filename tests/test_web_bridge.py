@@ -51,6 +51,37 @@ class WebBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.event(websocket, "registered"), {"type": "registered", "name": name})
         return websocket
 
+    async def test_group_creation_reaches_other_tabs_and_late_joiners_without_forged_members(self):
+        alice = await self.registered("alice")
+        self.assertEqual((await self.event(alice, "groups_updated"))["groups"], [])
+        bob = await self.registered("bob")
+        await self.event(bob, "groups_updated")
+        await alice.send_json({"type": "create_group", "name": "กลุ่มเรียน", "request_id": "create",
+                               "creator": "bob", "members": ["bob"]})
+        created = await self.event(alice, "group_created")
+        self.assertEqual(created["request_id"], "create")
+        snapshot = await self.event(alice, "groups_updated")
+        self.assertEqual(await self.event(bob, "groups_updated"), snapshot)
+        self.assertEqual(snapshot["groups"], [{"group_id": created["group_id"], "name": "กลุ่มเรียน",
+                                              "creator": "alice", "members": ["alice"]}])
+        carol = await self.registered("carol")
+        self.assertEqual(await self.event(carol, "groups_updated"), snapshot)
+
+    async def test_invalid_group_request_keeps_browser_connected_and_echoes_request_id(self):
+        websocket = await self.client.ws_connect("/ws")
+        await websocket.send_json({"type": "create_group", "name": "No login", "request_id": "early"})
+        self.assertEqual((await self.event(websocket, "error"))["request_id"], "early")
+        await websocket.send_json({"type": "connect", "host": "127.0.0.1", "port": self.fixture.port, "name": "alice"})
+        await self.event(websocket, "registered")
+        await self.event(websocket, "groups_updated")
+        await websocket.send_json({"type": "create_group", "name": "  ", "request_id": "empty"})
+        error = await self.event(websocket, "error")
+        self.assertEqual(error["request_id"], "empty")
+        self.assertIn("must not be empty", error["text"])
+        await websocket.send_json({"type": "create_group", "name": "Valid", "request_id": "valid"})
+        self.assertEqual((await self.event(websocket, "group_created"))["request_id"], "valid")
+        self.assertEqual(len((await self.event(websocket, "groups_updated"))["groups"]), 1)
+
     async def test_serves_only_web_assets_and_rejects_another_origin(self):
         response = await self.client.get("/")
         self.assertEqual(response.status, 200)

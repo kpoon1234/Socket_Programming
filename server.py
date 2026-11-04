@@ -33,6 +33,8 @@ class ClientConnection:
         self.send_lock = threading.Lock()
         self.last_users_version = -1
         self.supports_rooms = False
+        self.supports_groups = False
+        self.last_groups_version = -1
         self.announced_rooms = set()
 
     def send(self, message):
@@ -46,6 +48,13 @@ class ClientConnection:
                 return
             send_message(self.connection, message)
             self.last_users_version = message["version"]
+
+    def send_groups(self, message):
+        with self.send_lock:
+            if message["version"] <= self.last_groups_version:
+                return
+            send_message(self.connection, message)
+            self.last_groups_version = message["version"]
 
     def send_room(self, room, request_id=None):
         with self.send_lock:
@@ -119,6 +128,17 @@ def broadcast_users():
             return
 
 
+def broadcast_groups():
+    message = chat_state.groups_snapshot()
+    with clients_lock:
+        recipients = [client for client in clients.values() if client.supports_groups]
+    for recipient in recipients:
+        try:
+            recipient.send_groups(message)
+        except OSError:
+            disconnect_client(recipient)
+
+
 def register_client(client, message):
     global users_version
     name = message.get("name")
@@ -140,6 +160,7 @@ def register_client(client, message):
                 client.name = name
                 capabilities = message.get("capabilities", [])
                 client.supports_rooms = isinstance(capabilities, list) and "private_rooms" in capabilities
+                client.supports_groups = isinstance(capabilities, list) and "groups" in capabilities
                 clients[name] = client
                 users_version += 1
                 response = {"type": "registered", "name": name}
@@ -150,6 +171,8 @@ def register_client(client, message):
         print(f"Registered: {client.name}")
         if client.supports_rooms:
             client.send({"type": "private_rooms", "rooms": chat_state.list_rooms(client.name)})
+        if client.supports_groups:
+            client.send_groups(chat_state.groups_snapshot())
         broadcast_users()
 
 
@@ -163,6 +186,17 @@ def request_id_for(message):
     if not isinstance(request_id, str) or not request_id.strip():
         raise ValueError("A non-empty request_id is required.")
     return request_id
+
+
+def create_group(sender, message):
+    request_id = request_id_for(message)
+    # ไม่ใช้ creator หรือ members ที่ Client ส่งมา ผู้สร้างคือเจ้าของการเชื่อมต่อนี้เสมอ
+    group = chat_state.create_group(message.get("name"), sender.name)
+    try:
+        sender.send({"type": "group_created", "request_id": request_id, "group_id": group["group_id"]})
+    finally:
+        # แม้ผู้สร้างหลุดตอนรับคำตอบ คนอื่นต้องได้รับรายการที่บันทึกแล้ว
+        broadcast_groups()
 
 
 def open_private(sender, message):
@@ -275,6 +309,11 @@ def handle_client(client, address):
                     client.send({"type": "error", "text": "Register a name before sending messages."})
             elif message_type == "message":
                 route_message(client, message)
+            elif message_type == "create_group":
+                try:
+                    create_group(client, message)
+                except (ValueError, OSError) as error:
+                    client.send({"type": "error", "request_id": message.get("request_id"), "text": str(error)})
             elif message_type in ("open_private", "private_message"):
                 try:
                     if message_type == "open_private":

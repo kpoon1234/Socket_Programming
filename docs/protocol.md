@@ -1,6 +1,6 @@
 # Protocol and Data Contracts
 
-เอกสารนี้อธิบายข้อมูลที่ใช้ใน Part 2 ขั้นที่ 1–3 รวมห้องส่วนตัวและประวัติ ส่วนกลุ่มยังเป็นแผนสำหรับขั้นถัดไป
+เอกสารนี้อธิบายข้อมูลที่ใช้ใน Part 2 ขั้นที่ 1–4 รวมห้องส่วนตัว ประวัติ และการสร้าง/แสดงกลุ่ม ส่วน Join/Leave และข้อความกลุ่มยังเป็นขั้นถัดไป
 
 ## รูปแบบบนเครือข่าย
 
@@ -28,7 +28,7 @@ Server ตอบ `registered` เป็นคำตอบแรกของก�
 {"type": "error", "text": "Name is already in use. Choose another name."}
 ```
 
-Terminal client ลองชื่อใหม่ผ่าน Socket เดิมได้ ส่วนเว็บและ Tkinter ปิดการเชื่อมต่อที่ลงชื่อไม่สำเร็จ แล้วให้แก้ชื่อและกด Connect ใหม่ งานเครือข่ายแต่ละครั้งมีคิวและ thread ของตัวเองเพื่อไม่ให้เหตุการณ์จากรอบเก่าปนกับรอบใหม่
+หน้าเว็บปิดการเชื่อมต่อที่ลงชื่อไม่สำเร็จ แล้วให้แก้ชื่อและกด Connect ใหม่ งานเครือข่ายแต่ละครั้งมีคิวและ thread ของตัวเองเพื่อไม่ให้เหตุการณ์จากรอบเก่าปนกับรอบใหม่
 
 เมื่อรายชื่อเปลี่ยน Server ส่งภาพรวมรายชื่อทั้งหมดให้ผู้ใช้ที่ลงชื่อแล้วทุกคน รวมคนที่เพิ่งเข้า:
 
@@ -44,7 +44,7 @@ Terminal client ลองชื่อใหม่ผ่าน Socket เดิ�
 - การเชื่อมต่อใหม่เริ่มตัวนับที่รับล่าสุดใหม่ จึงใช้ต่อได้แม้ Server เปิดใหม่และเริ่ม version จากต้น
 - Client ที่ยังไม่ลงทะเบียนจะไม่ได้รับรายชื่อออนไลน์
 
-การส่งข้อความส่วนตัวใน Terminal จาก Part 1 ยังใช้ต่อได้:
+Server ยังรองรับคำสั่งข้อความพื้นฐานจาก Part 1 สำหรับการทดสอบระดับ protocol:
 
 ```json
 {"type": "message", "to": "bob", "text": "Hello Bob!"}
@@ -62,7 +62,7 @@ WebSocket ส่งหนึ่ง JSON object ต่อ text message จึง�
 {"type": "connect", "host": "127.0.0.1", "port": 5000, "name": "alice"}
 ```
 
-bridge ตรวจชนิดข้อมูลและพอร์ต สร้าง NetworkClient หนึ่งตัวต่อ WebSocket แล้วเรียก `connect()` ซึ่งส่ง `register` พร้อม `capabilities: ["private_rooms"]` ให้ TCP Server คำสั่ง `connect` จึงไม่ได้ส่งไปที่ Server โดยตรง Client เดิมที่ไม่ประกาศ capability นี้จะยังได้รับรูปแบบข้อความเดิม
+bridge ตรวจชนิดข้อมูลและพอร์ต สร้าง NetworkClient หนึ่งตัวต่อ WebSocket แล้วเรียก `connect()` ซึ่งส่ง `register` พร้อม `capabilities: ["private_rooms", "groups"]` ให้ TCP Server คำสั่ง `connect` จึงไม่ได้ส่งไปที่ Server โดยตรง Client เดิมที่ไม่ประกาศ capability เหล่านี้จะยังได้รับรูปแบบข้อความเดิม และไม่ถูกแทรกเหตุการณ์กลุ่ม
 
 คำสั่งอื่นจาก Browser:
 
@@ -76,7 +76,7 @@ bridge ตรวจชนิดข้อมูลและพอร์ต สร
 
 - `disconnect` ปิด TCP Socket ของ session นั้น รอเหตุการณ์ `disconnected` แล้วปิด WebSocket
 - `message` รองรับใน bridge เพื่อใช้กติกาส่งต่อ Part 1 เดิม ส่วน UI ห้องแชตใช้ `open_private` และ `private_message` ซึ่งส่งได้หลัง `registered` เท่านั้น
-- เหตุการณ์ `connected`, `registered`, `users_updated`, `private_rooms`, `room_opened`, `private_message`, `error`, `message`, `sent`, `disconnected` ส่งต่อให้ Browser ผ่าน WebSocket โดย bridge ไม่สร้างรายชื่อหรือสมาชิกจำลอง
+- เหตุการณ์ `connected`, `registered`, `users_updated`, `private_rooms`, `room_opened`, `private_message`, `groups_updated`, `group_created`, `error`, `message`, `sent`, `disconnected` ส่งต่อให้ Browser ผ่าน WebSocket โดย bridge ไม่สร้างรายชื่อหรือสมาชิกจำลอง
 - แต่ละแท็บมี session แยกกัน ไม่ใช้ global current user หรือ NetworkClient ร่วมกัน
 - เมื่อชื่อซ้ำ bridge ส่ง `error` ก่อนปิด TCP และส่ง `disconnected` เพื่อให้หน้าเว็บกลับมาแก้ชื่อได้
 - ปิดแท็บหรือ WebSocket หลุด จะปิด TCP Socket และหยุด workers เฉพาะ session นั้น
@@ -142,31 +142,57 @@ Server ตรวจสมาชิก ผู้รับออนไลน์ �
 - ถ้าผู้รับหลุดหลังบันทึกแต่ระหว่างส่งสด ผู้ส่งยังได้ข้อความที่บันทึกแล้ว พร้อม `error` ที่มี `persisted: true` และ `message_id` ประวัติจะคืนให้คู่สนทนาเมื่อกลับมา
 - ถ้าผู้ส่งหลุดก่อนรับผลตอบกลับ อาจมีข้อความที่บันทึกสำเร็จแล้ว ให้เปิดห้องตรวจประวัติก่อนส่งซ้ำ หน้าเว็บไม่ resend อัตโนมัติ
 - ปิดการเชื่อมต่อทำให้หน้าเว็บล้างข้อมูล session รวมข้อความร่าง ส่วนประวัติถาวรอยู่กับ Server การเก็บข้อความร่างแยกห้องครอบคลุมการสลับแท็บระหว่างเชื่อมต่อ
-- Terminal Client เดิมยังส่งและรับ `message` กับ `sent` แบบเดิมได้ ข้อความระหว่างคนละชื่อเก็บลงห้องเดียวกับเว็บ และแปลงรูปแบบตาม capability ของผู้รับ ส่วนการส่งหาตัวเองแบบเดิมไม่ได้สร้างห้องส่วนตัวสองสมาชิก
+- Server ยังรองรับ `message` กับ `sent` แบบพื้นฐานสำหรับ Client ที่ไม่ประกาศ capability ข้อความระหว่างคนละชื่อเก็บลงห้องเดียวกับเว็บ และแปลงรูปแบบตาม capability ของผู้รับ ส่วนการส่งหาตัวเองแบบเดิมไม่ได้สร้างห้องส่วนตัวสองสมาชิก
 
 Server ใช้ Lock แยกตามห้องเพื่อเรียงการเปิดประวัติและการส่งข้อความของห้องนั้น ใช้ Lock ของ state store เพื่อป้องกันการเขียนไฟล์ชนกัน และปล่อย `clients_lock` ก่อนทำ I/O ไฟล์หรือเครือข่าย
 
-## เหตุการณ์ภายใน NetworkClient และ Tkinter เดิม
+## เหตุการณ์ภายใน NetworkClient และ bridge
 
 `client_network.py` ใช้คิวสองทิศทาง:
 
 ```text
-Main thread -> outgoing queue -> sender thread -> socket
-Socket -> receiver thread -> events queue -> main thread -> widgets
+Browser -> WebSocket -> bridge handler -> outgoing queue -> sender thread -> TCP socket
+TCP socket -> receiver thread -> events queue -> bridge task -> WebSocket -> Browser DOM
 ```
 
-- `connected` และ `disconnected` เป็นเหตุการณ์ที่ Client สร้างเอง ไม่ใช่คำสั่ง JSON ที่ Server ส่งมา
-- `registered`, `users_updated`, `error` และข้อความอื่นเป็นข้อมูลจาก Server ที่ receiver ใส่คิวให้ GUI
-- main thread ใช้ `after()` ตรวจคิวโดยไม่รอ และประมวลผลจำนวนจำกัดต่อรอบ เพื่อให้รับการคลิกและการพิมพ์ได้ต่อ
-- การ connect อยู่ใน receiver thread ส่วนการ send อยู่ใน sender thread จึงไม่ให้ GUI รอเครือข่าย
-- ช่วงเชื่อมต่อหนึ่งครั้งมี main thread ของ GUI และ thread เบื้องหลังสำหรับรับและส่ง รวมสาม thread ที่แอปใช้งาน
-- เมื่อตัดการเชื่อมต่อ ใช้ Event แจ้งหยุด ปลุกคิวงานส่ง และ shutdown Socket เพื่อปลุกงานรับ โดยไม่ join รอใน callback ของ GUI
+- `connected` และ `disconnected` เป็นเหตุการณ์ที่ NetworkClient สร้างเอง ไม่ใช่คำสั่ง JSON ที่ Server ส่งมา
+- `registered`, `users_updated`, `groups_updated` และเหตุการณ์อื่นจาก Server ถูก receiver ใส่คิว `events`
+- งาน async ของ bridge ใช้ `get_nowait()` ตรวจคิวรอบละไม่เกิน 100 เหตุการณ์ แล้ว `asyncio.sleep(0.02)` เพื่อคืนเวลาให้แท็บอื่น
+- การ connect อยู่ใน receiver thread ส่วนการ send อยู่ใน sender thread จึงไม่ให้ event loop รอเครือข่าย
+- แต่ละ session มี sender และ receiver สอง thread ส่วนงาน async ของทุกแท็บใช้ event loop ของ bridge ร่วมกัน
+- เมื่อตัดการเชื่อมต่อ ใช้ Event แจ้งหยุด ปลุกคิวงานส่ง และ shutdown Socket เพื่อปลุกงานรับ การรอ thread จบใช้ `asyncio.to_thread()` เพื่อไม่ขวาง event loop
 
-สำหรับหน้าเว็บ เปลี่ยนผู้ตรวจคิว `events` จาก `after()` เป็น async task ของ bridge ซึ่งใช้ `get_nowait()` รอบละไม่เกิน 100 เหตุการณ์และ `asyncio.sleep(0.02)` เพื่อคืนเวลาให้แท็บอื่น แล้วส่ง JSON ผ่าน WebSocket ให้ JavaScript อัปเดต DOM งาน async ไม่ได้สร้าง thread ใหม่ต่อแท็บ ส่วน `NetworkClient` ยังมี worker รับ/ส่งสอง thread ตามเดิม
+## การสร้างและแสดงกลุ่ม
+
+Client ที่ประกาศ capability `groups` จะได้รับ `groups_updated` หลัง `registered` โดยมีทุกกลุ่ม รวมกลุ่มที่ตัวเองไม่ได้เป็นสมาชิก เมื่อไม่มีรายการจะเป็น `groups: []` คำสั่งสร้างใช้ได้หลังลงทะเบียนเท่านั้น:
+
+```json
+{"type": "create_group", "name": "Study group", "request_id": "create-1"}
+```
+
+Server ตัดช่องว่างหัวท้ายของชื่อและปฏิเสธชื่อว่าง กำหนดผู้สร้างจากการเชื่อมต่อและสมาชิกตั้งต้นเพียงผู้สร้าง ไม่ใช้ `creator` หรือ `members` จาก Client แต่ละคำสั่งที่สำเร็จสร้างรหัสใหม่แม้ใช้ชื่อกลุ่มซ้ำ การใช้ `request_id` เป็นการจับคู่คำตอบ ไม่ใช่กลไก deduplicate การส่งคำสั่งซ้ำ:
+
+```json
+{"type": "group_created", "request_id": "create-1", "group_id": "group_example"}
+```
+
+คำตอบนี้ส่งหลังบันทึกไฟล์สำเร็จ แล้ว Server กระจาย snapshot ล่าสุดให้ผู้ที่ประกาศ `groups` ทุกคน โดยไม่ส่งเนื้อหาห้องแชตไปด้วย:
+
+```json
+{"type": "groups_updated", "version": 1, "groups": [{"group_id": "group_example", "name": "Study group", "creator": "alice", "members": ["alice"]}]}
+```
+
+- เลขรุ่นและกลุ่มอ่านภายใต้ Lock เดียวกัน เพิ่มรุ่นเมื่อสร้างและบันทึกสำเร็จเท่านั้น แล้วปล่อย Lock ก่อนส่งเครือข่าย
+- Server, NetworkClient และ Browser กรอง snapshot ที่ version เก่าหรือเท่ากับที่ส่ง/รับแล้ว เพื่อไม่ให้รายการย้อนเมื่อสร้างพร้อมกัน
+- `version` เริ่ม 0 เมื่อโหลด Server ใหม่ แม้มีข้อมูลเดิม การเชื่อมต่อใหม่รีเซ็ตเลขรุ่นที่รับล่าสุดเป็น -1
+- Browser เพิ่ม/แทนการ์ดจาก `groups_updated` เท่านั้น ส่วน `group_created` ใช้จบสถานะรอและปิดฟอร์ม
+- หากบันทึกล้มเหลว ตอบ `error` พร้อม request_id ไม่ตอบสำเร็จ ไม่กระจายกลุ่มที่บันทึกไม่สำเร็จ และไม่เปลี่ยนข้อมูลในหน่วยความจำ
+- กลุ่มและสมาชิกคงอยู่แม้ทุกคนออฟไลน์หรือเปิด Server ใหม่ รายชื่อออนไลน์ยังมาจาก Socket จริงแยกต่างหาก
+- ขั้นนี้ยังไม่มีคำสั่ง Join/Leave หรือส่งข้อความกลุ่ม และยังไม่เปิดแท็บห้องกลุ่ม
 
 ## ข้อมูลถาวร
 
-Step 3 ใช้ `state_store.py` เก็บห้องและประวัติส่วนตัวจริงใน `output/chat_state.json` รูปแบบตั้งต้นคือ:
+ใช้ `state_store.py` เก็บห้อง ประวัติส่วนตัว และกลุ่มจริงใน `output/chat_state.json` รูปแบบตั้งต้นคือ:
 
 ```json
 {
@@ -177,7 +203,7 @@ Step 3 ใช้ `state_store.py` เก็บห้องและประว�
 }
 ```
 
-- `groups` ยังว่าง ระบบกลุ่มและสิทธิ์ตามช่วง Join/Leave จะเพิ่มในขั้นถัดไป
+- `groups` ผูก group_id กับข้อมูล group_id, name, creator และ members รายการเดิมที่ groups ว่างยังโหลดได้ ส่วนสิทธิ์ข้อความตามช่วง Join/Leave จะเพิ่มในขั้นถัดไป
 - `private_rooms` ผูกรหัสห้องกับสมาชิกสองชื่อคงที่
 - `messages` เก็บข้อความที่มี room_id, message_id, sequence, from, to, text และ timestamp โดยไม่เก็บ request_id
 - ห้องและประวัติโหลดกลับเมื่อเปิด Server ใหม่ ส่วน Socket, Lock, thread, queue และสถานะออนไลน์ไม่บันทึกเป็นข้อมูลถาวร

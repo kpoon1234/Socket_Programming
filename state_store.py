@@ -1,4 +1,4 @@
-"""Keep private rooms and messages in an atomically replaced JSON file."""
+"""Keep rooms, groups, and messages in an atomically replaced JSON file."""
 
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -14,6 +14,7 @@ class ChatStateStore:
     def __init__(self, path):
         self.path = Path(path)
         self.lock = threading.Lock()
+        self.groups_version = 0
         self.data = {"schema_version": 1, "groups": {}, "private_rooms": {}, "messages": []}
         if self.path.exists():
             try:
@@ -31,6 +32,16 @@ class ChatStateStore:
             raise ValueError("Rooms and groups must be objects.")
         if not isinstance(data.get("messages"), list):
             raise ValueError("Messages must be a list.")
+        for group_id, group in data["groups"].items():
+            if not isinstance(group_id, str) or not group_id or not isinstance(group, dict) or group.get("group_id") != group_id:
+                raise ValueError("Invalid group ID.")
+            if not all(isinstance(group.get(key), str) and group[key].strip() for key in ("name", "creator")):
+                raise ValueError("A group must have a name and creator.")
+            members = group.get("members")
+            if not isinstance(members, list) or not members or not all(isinstance(name, str) and name.strip() for name in members):
+                raise ValueError("A group must have named members.")
+            if len(set(members)) != len(members):
+                raise ValueError("Duplicate group member.")
         pairs = set()
         for room_id, room in data["private_rooms"].items():
             if not isinstance(room, dict) or room.get("room_id") != room_id or room.get("kind") != "private":
@@ -79,6 +90,28 @@ class ChatStateStore:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
         self.data = data
+
+    def groups_snapshot(self):
+        with self.lock:
+            # อ่านเลขรุ่นกับรายการพร้อมกัน เพื่อไม่ให้เลขรุ่นใหม่ติดไปกับข้อมูลเก่า
+            return {"type": "groups_updated", "version": self.groups_version,
+                    "groups": deepcopy(list(self.data["groups"].values()))}
+
+    def create_group(self, name, creator):
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Group name must not be empty.")
+        if not isinstance(creator, str) or not creator.strip():
+            raise ValueError("A registered creator is required.")
+        with self.lock:
+            group_id = f"group_{uuid.uuid4().hex}"
+            group = {"group_id": group_id, "name": name.strip(),
+                     "creator": creator, "members": [creator]}
+            data = deepcopy(self.data)
+            data["groups"][group_id] = group
+            self.save(data)
+            # เพิ่มรุ่นเมื่อบันทึกสำเร็จเท่านั้น และเริ่มนับใหม่เมื่อเปิด Server รอบใหม่
+            self.groups_version += 1
+            return deepcopy(group)
 
     def list_rooms(self, name):
         with self.lock:

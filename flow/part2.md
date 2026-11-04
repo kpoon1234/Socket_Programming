@@ -71,7 +71,7 @@ Client computer B: Browser B <-> WebSocket <-> Python bridge B <-> TCP <-> Serve
 - การเลือกดูกลุ่มไม่ถือว่าเข้าร่วม สมาชิกใหม่ต้องกด Join เอง ส่วนสมาชิกเดิมที่กลับมาใช้ชื่อเดิมจะใช้ห้องเดิมต่อได้
 - แสดงข้อความใหม่ในห้องที่ถูกต้อง แม้ผู้ใช้กำลังเปิดดูอีกห้อง
 
-ใช้ Tailwind CLI สร้าง CSS จาก class ใน HTML/JavaScript ก่อนเปิดแอป Node.js ใช้เฉพาะการ build สไตล์ ไม่ใช่ TCP Server ส่วน Browser โหลด HTML, JavaScript และ CSS จาก bridge ภายในเครื่อง Tkinter เดิมเก็บไว้เป็นตัวอย่างและไม่ได้เป็นหน้าหลักของแผนต่อไป
+ใช้ Tailwind CLI สร้าง CSS จาก class ใน HTML/JavaScript ก่อนเปิดแอป Node.js ใช้เฉพาะการ build สไตล์ ไม่ใช่ TCP Server ส่วน Browser โหลด HTML, JavaScript และ CSS จาก bridge ภายในเครื่อง
 
 ### การแบ่งหน้าที่
 
@@ -219,8 +219,7 @@ Browser ส่งคำสั่งผ่าน WebSocket ให้ bridge แ�
 | --- | --- |
 | `server.py` | เพิ่มรายชื่อ ห้องส่วนตัว กลุ่ม สมาชิก และการตรวจสิทธิ์ |
 | `protocol.py` | ใช้การส่งและแยก JSON ร่วมกันต่อไป |
-| `client.py` | เก็บ Terminal client สำหรับทดลองและตรวจปัญหาเครือข่ายตามที่ตกลงก่อนเริ่ม GUI |
-| `client_network.py` | งาน TCP และคิวเหตุการณ์ที่ bridge เรียกใช้ร่วมกับ Client เดิม |
+| `client_network.py` | งาน TCP และคิวเหตุการณ์ที่ bridge เรียกใช้ |
 | `web_bridge.py` | เปิดเว็บภายในเครื่องและดูแล WebSocket แยกตามแท็บ พร้อมส่งต่อไปยัง NetworkClient |
 | `web/index.html` | โครงหน้าจอโทนมืด ฟอร์มเชื่อมต่อ รายชื่อ กลุ่ม และพื้นที่ห้อง |
 | `web/app.js` | คำสั่งจากผู้ใช้ WebSocket และการอัปเดต DOM |
@@ -228,7 +227,6 @@ Browser ส่งคำสั่งผ่าน WebSocket ให้ bridge แ�
 | `web/assets/styles.css` | CSS ที่ Tailwind สร้างใหม่ได้และละเว้นจาก Git |
 | `package.json`, `package-lock.json` | dependency และคำสั่ง build/watch ของ Tailwind |
 | `requirements.txt` | dependency Python สำหรับ bridge |
-| `gui_client.py` | เก็บ GUI Tkinter เดิมเป็นตัวอย่าง ไม่ใช่หน้าหลักสำหรับต่อยอด |
 | `state_store.py` | เสนอให้แยกการอ่านและบันทึกกลุ่ม สมาชิก และประวัติ พร้อมกรองสิทธิ์ก่อนคืนให้ Client |
 | `output/` | ข้อมูลกลุ่ม สมาชิก และประวัติที่โปรแกรมสร้างและบันทึก ถูกละเว้นจาก Git |
 | `tests/test_chat.py` | ต่อยอดการทดสอบการเชื่อมต่อและเพิ่มกรณี Part 2 โดยแยกไฟล์เพิ่มเติมเมื่อจำเป็น |

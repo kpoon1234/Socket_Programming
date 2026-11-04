@@ -53,3 +53,27 @@ class StateStoreTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ChatStateStore(self.path)
             self.assertEqual(self.path.read_text(), value)
+
+    def test_groups_and_private_history_survive_each_others_writes(self):
+        room = self.store.get_or_create_room("alice", "bob")
+        first = self.store.create_group("ทีมงาน", "alice")
+        message = self.store.append_message(room["room_id"], "bob", "Private content")
+        second = self.store.create_group("ทีมงาน", "bob")
+        snapshot = ChatStateStore(self.path).groups_snapshot()
+        self.assertEqual(snapshot["groups"], [first, second])
+        self.assertNotIn("Private content", json.dumps(snapshot))
+        self.assertEqual(ChatStateStore(self.path).snapshot(room["room_id"], "alice")["messages"], [message])
+        snapshot["groups"][0]["members"].append("outsider")
+        self.assertEqual(self.store.groups_snapshot()["groups"][0]["members"], ["alice"])
+
+    def test_invalid_group_records_are_rejected_without_overwriting(self):
+        group = self.store.create_group("Valid", "alice")
+        for changes in ({"group_id": "other"}, {"name": "  "}, {"creator": 3},
+                        {"members": []}, {"members": ["alice", "alice"]}, {"members": [None]}):
+            data = json.loads(self.path.read_text())
+            data["groups"][group["group_id"]] = {**group, **changes}
+            encoded = json.dumps(data)
+            self.path.write_text(encoded)
+            with self.assertRaises(ValueError):
+                ChatStateStore(self.path)
+            self.assertEqual(self.path.read_text(), encoded)

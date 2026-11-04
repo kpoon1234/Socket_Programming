@@ -15,6 +15,13 @@ const requests = new Map();
 const roomTabs = document.querySelector("#room-tabs");
 const roomPanels = document.querySelector("#room-panels");
 const overviewTab = document.querySelector("#overview-tab");
+const groupsList = document.querySelector("#groups-list");
+const createGroupButton = document.querySelector("#create-group-button");
+const groupForm = document.querySelector("#group-form");
+const groupNameInput = document.querySelector("#group-name");
+const groupSubmit = document.querySelector("#group-submit");
+const groupCancel = document.querySelector("#group-cancel");
+const groupError = document.querySelector("#group-error");
 
 let socket = null;
 let currentName = null;
@@ -24,6 +31,8 @@ let lastError = "";
 let onlineUsers = [];
 let activeRoomId = null;
 let lastOpenRequestId = null;
+let lastGroupsVersion = -1;
+let pendingGroupRequest = null;
 
 function setStatus(text, state) {
   statusText.textContent = text;
@@ -49,6 +58,16 @@ function setBusy(busy) {
 function clearSession() {
   currentName = null;
   lastUsersVersion = -1;
+  lastGroupsVersion = -1;
+  pendingGroupRequest = null;
+  groupsList.replaceChildren();
+  document.querySelector("#group-count").textContent = "0";
+  document.querySelector("#groups-empty").textContent = "Connect to see groups.";
+  document.querySelector("#groups-empty").hidden = false;
+  groupForm.reset();
+  groupError.hidden = true;
+  showGroupForm(false);
+  updateGroupControls();
   onlineUsers = [];
   requests.clear();
   for (const room of rooms.values()) {
@@ -98,9 +117,52 @@ function renderUsers(users) {
   for (const room of rooms.values()) updateRoomControls(room);
 }
 
+function updateGroupControls() {
+  const disabled = currentName === null || pendingGroupRequest !== null;
+  for (const control of [createGroupButton, groupNameInput, groupSubmit, groupCancel]) {
+    control.disabled = disabled;
+  }
+  groupSubmit.textContent = pendingGroupRequest === null ? "Create" : "Creating…";
+}
+
+function showGroupForm(visible) {
+  groupForm.hidden = !visible;
+  createGroupButton.setAttribute("aria-expanded", String(visible));
+  if (visible) groupNameInput.focus();
+}
+
+function renderGroups(groups) {
+  const fragment = document.createDocumentFragment();
+  for (const group of groups) {
+    const card = document.createElement("li");
+    card.dataset.groupId = group.group_id;
+    card.className = "rounded-lg border border-line/70 bg-panel/60 p-3";
+    const title = document.createElement("h3");
+    title.className = "break-words text-sm font-medium";
+    title.textContent = group.name;
+    const id = document.createElement("p");
+    id.className = "mt-1 break-all font-mono text-[10px] leading-4 text-soft";
+    id.textContent = `ID: ${group.group_id}`;
+    const members = document.createElement("p");
+    members.className = "mt-1 break-words text-xs leading-5 text-soft";
+    members.textContent = `Members: ${group.members.join(", ")}`;
+    const membership = document.createElement("p");
+    const isMember = group.members.includes(currentName);
+    membership.className = isMember ? "mt-1 text-xs text-emerald-300" : "mt-1 text-xs text-soft";
+    membership.textContent = isMember ? "You are a member" : "Not joined";
+    // รายการนี้แสดง metadata เท่านั้น ยังไม่เปิดห้องหรือรับข้อความกลุ่ม
+    card.append(title, id, members, membership);
+    fragment.append(card);
+  }
+  groupsList.replaceChildren(fragment);
+  document.querySelector("#group-count").textContent = String(groups.length);
+  document.querySelector("#groups-empty").textContent = "No groups yet. Create the first one.";
+  document.querySelector("#groups-empty").hidden = groups.length > 0;
+}
+
 function sendCommand(command, context) {
   if (socket?.readyState !== WebSocket.OPEN || currentName === null) {
-    setStatus("Connect before opening a room or sending a message.", "Error");
+    setStatus("Connect before using chat features.", "Error");
     return null;
   }
   const requestId = crypto.randomUUID();
@@ -290,6 +352,13 @@ function handlePrivateMessage(event) {
 
 function handleRequestError(event) {
   const request = requests.get(event.request_id);
+  if (request?.kind === "create_group" && event.request_id === pendingGroupRequest) {
+    pendingGroupRequest = null;
+    groupError.textContent = event.text;
+    groupError.hidden = false;
+    updateGroupControls();
+    groupNameInput.focus();
+  }
   const room = rooms.get(request?.roomId);
   if (room) {
     room.error.textContent = event.text;
@@ -318,6 +387,7 @@ function handleEvent(event) {
       break;
     case "registered":
       currentName = event.name;
+      updateGroupControls();
       connectButton.textContent = "Connected";
       document.querySelector("#identity").textContent = `${currentName} · You`;
       document.querySelector("#session-label").textContent = `Signed in as ${currentName}`;
@@ -332,6 +402,25 @@ function handleEvent(event) {
       break;
     case "private_rooms":
       for (const room of event.rooms) ensureRoom(room);
+      break;
+    case "groups_updated":
+      if (event.version > lastGroupsVersion) {
+        lastGroupsVersion = event.version;
+        renderGroups(event.groups);
+      }
+      break;
+    case "group_created":
+      if (requests.get(event.request_id)?.kind === "create_group" && event.request_id === pendingGroupRequest) {
+        requests.delete(event.request_id);
+        pendingGroupRequest = null;
+        groupForm.reset();
+        groupError.hidden = true;
+        showGroupForm(false);
+        updateGroupControls();
+        createGroupButton.focus();
+        setStatus("Group created.", "Online");
+      }
+      // ไม่เพิ่มการ์ดจากคำตอบนี้ รอรายการจริงใน groups_updated เพื่อไม่ให้กลุ่มซ้ำ
       break;
     case "room_opened":
       handleRoomOpened(event);
@@ -357,13 +446,28 @@ function handleEvent(event) {
     case "disconnected":
       if (!intentionalDisconnect) {
         lastError = lastError || (requests.size > 0
-          ? `${event.text} Reopen your conversation after reconnecting to check saved messages before resending.`
+          ? `${event.text} Check saved conversations and groups after reconnecting before retrying.`
           : event.text);
       }
       socket.close();
       break;
   }
 }
+
+createGroupButton.addEventListener("click", () => showGroupForm(groupForm.hidden));
+groupCancel.addEventListener("click", () => {
+  groupForm.reset();
+  groupError.hidden = true;
+  showGroupForm(false);
+  createGroupButton.focus();
+});
+groupForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (currentName === null || pendingGroupRequest !== null) return;
+  groupError.hidden = true;
+  pendingGroupRequest = sendCommand({ type: "create_group", name: groupNameInput.value }, { kind: "create_group" });
+  updateGroupControls();
+});
 
 overviewTab.addEventListener("click", () => {
   lastOpenRequestId = null;
