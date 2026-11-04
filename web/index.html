@@ -63,7 +63,7 @@
               <span id="group-count" class="rounded-md border border-line px-2 py-0.5 text-xs text-soft">0</span>
             </div>
             <p id="groups-empty" class="mb-4 text-sm leading-6 text-soft">Connect to see groups.</p>
-            <ul id="groups-list" class="mb-4 max-h-56 space-y-3 overflow-y-auto pr-1 [scrollbar-width:thin] lg:max-h-32" aria-label="Groups"></ul>
+            <ul id="groups-list" class="mb-4 max-h-56 space-y-3 overflow-y-auto pr-1 [scrollbar-width:thin] lg:max-h-48" aria-label="Groups"></ul>
             <button id="create-group-button" type="button" disabled aria-expanded="false" aria-controls="group-form" class="flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-line text-sm transition hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-slate-300 disabled:cursor-not-allowed disabled:opacity-40"><span class="text-lg" aria-hidden="true">+</span> Create group</button>
             <form id="group-form" hidden class="mt-3 rounded-lg border border-line bg-panel p-3">
               <label for="group-name" class="mb-2 block text-xs text-soft">Group name</label>
@@ -111,6 +111,39 @@
             <p class="mt-1 text-xs text-soft">Private conversation</p>
           </div>
           <span data-presence class="shrink-0 text-xs text-soft"></span>
+        </header>
+        <div data-history class="h-72 min-h-0 overflow-y-auto px-5 py-5 md:h-80 lg:h-auto lg:flex-1 sm:px-6" role="log" aria-live="polite" aria-relevant="additions">
+          <p data-empty class="py-10 text-center text-sm text-soft">No messages yet. Say hello!</p>
+          <div data-messages class="flex flex-col gap-4"></div>
+        </div>
+        <div class="shrink-0 border-t border-line/60 px-5 py-4 sm:px-6">
+          <p data-error role="alert" hidden class="mb-3 break-words text-sm text-rose-300"></p>
+          <div data-failed hidden class="mb-3 rounded-lg border border-rose-400/25 bg-rose-400/5 p-3">
+            <p data-failed-text class="mb-2 whitespace-pre-wrap break-words text-sm text-soft"></p>
+            <button data-restore type="button" class="text-xs text-rose-200 underline underline-offset-4">Use unsent text</button>
+          </div>
+          <form data-composer>
+            <label data-message-label class="mb-2 block text-sm text-soft">Message</label>
+            <div class="flex items-end gap-3">
+              <textarea data-input rows="2" required disabled placeholder="Write a message…" class="min-h-12 min-w-0 flex-1 resize-none rounded-lg border border-line bg-panel px-3 py-2.5 text-sm leading-6 outline-none placeholder:text-slate-600 focus:border-slate-400 focus:ring-2 focus:ring-slate-500/20 disabled:cursor-not-allowed disabled:opacity-50"></textarea>
+              <button data-send type="submit" disabled class="h-12 rounded-lg border border-slate-500/40 bg-accent px-5 text-sm font-medium transition hover:bg-slate-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-300 disabled:cursor-not-allowed disabled:opacity-35">Send</button>
+            </div>
+            <div class="mt-2 flex min-h-5 flex-wrap justify-between gap-2 text-xs text-soft">
+              <span data-send-status></span><span>Enter to send · Shift+Enter for a new line</span>
+            </div>
+          </form>
+        </div>
+      </section>
+    </template>
+    <template id="group-room-template">
+      <section role="tabpanel" hidden class="flex min-h-0 flex-1 flex-col">
+        <header class="shrink-0 border-b border-line/60 px-5 py-3 sm:px-6">
+          <div class="mb-1 flex items-center justify-between gap-3">
+            <h2 data-group-name class="min-w-0 truncate text-base font-semibold"></h2>
+            <span data-presence class="shrink-0 text-xs text-emerald-300"></span>
+          </div>
+          <p class="break-all text-[10px] leading-4 text-soft">Group conversation · <span data-group-id class="font-mono"></span></p>
+          <p data-group-members class="mt-1 truncate text-xs leading-5 text-soft"></p>
         </header>
         <div data-history class="h-72 min-h-0 overflow-y-auto px-5 py-5 md:h-80 lg:h-auto lg:flex-1 sm:px-6" role="log" aria-live="polite" aria-relevant="additions">
           <p data-empty class="py-10 text-center text-sm text-soft">No messages yet. Say hello!</p>

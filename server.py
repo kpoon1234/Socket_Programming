@@ -1,4 +1,4 @@
-"""Route private messages between multiple TCP clients."""
+"""Route private and group messages between multiple TCP clients."""
 
 import os
 from pathlib import Path
@@ -34,8 +34,10 @@ class ClientConnection:
         self.last_users_version = -1
         self.supports_rooms = False
         self.supports_groups = False
+        self.supports_group_messages = False
         self.last_groups_version = -1
         self.announced_rooms = set()
+        self.announced_groups = set()
 
     def send(self, message):
         with self.send_lock:
@@ -80,6 +82,22 @@ class ClientConnection:
                 send_message(self.connection, {
                     "type": "message", "from": message["from"], "to": message["to"], "text": message["text"],
                 })
+
+    def send_group_room(self, group, request_id):
+        with self.send_lock:
+            send_message(self.connection, {"type": "group_opened", **group, "request_id": request_id})
+            self.announced_groups.add(group["group_id"])
+
+    def send_group(self, group, message, request_id=None):
+        with self.send_lock:
+            if group["group_id"] not in self.announced_groups:
+                history = [item for item in group["messages"] if item["message_id"] != message["message_id"]]
+                send_message(self.connection, {"type": "group_opened", **group, "messages": history})
+                self.announced_groups.add(group["group_id"])
+            event = dict(message)
+            if request_id is not None:
+                event["request_id"] = request_id
+            send_message(self.connection, event)
 
     def close(self):
         try:
@@ -161,6 +179,7 @@ def register_client(client, message):
                 capabilities = message.get("capabilities", [])
                 client.supports_rooms = isinstance(capabilities, list) and "private_rooms" in capabilities
                 client.supports_groups = isinstance(capabilities, list) and "groups" in capabilities
+                client.supports_group_messages = isinstance(capabilities, list) and "group_messages" in capabilities
                 clients[name] = client
                 users_version += 1
                 response = {"type": "registered", "name": name}
@@ -197,6 +216,54 @@ def create_group(sender, message):
     finally:
         # แม้ผู้สร้างหลุดตอนรับคำตอบ คนอื่นต้องได้รับรายการที่บันทึกแล้ว
         broadcast_groups()
+
+
+def join_group(sender, message):
+    request_id = request_id_for(message)
+    # อนุญาตให้เข้าร่วมได้เฉพาะชื่อตัวเอง ไม่ใช้ name หรือ members ที่แนบมา
+    group = chat_state.join_group(message.get("group_id"), sender.name)
+    try:
+        sender.send({"type": "group_joined", "request_id": request_id, "group_id": group["group_id"]})
+    finally:
+        broadcast_groups()
+
+
+def open_group(sender, message):
+    request_id = request_id_for(message)
+    group_id = message.get("group_id")
+    if not isinstance(group_id, str) or not group_id.strip():
+        raise ValueError("A non-empty group_id is required.")
+    # ล็อกเดียวกับการส่ง เพื่อให้ประวัติและข้อความสดของกลุ่มเรียงกัน
+    with room_lock(group_id):
+        sender.send_group_room(chat_state.group_snapshot(group_id, sender.name), request_id)
+
+
+def deliver_group(sender, message):
+    request_id = request_id_for(message)
+    group_id = message.get("group_id")
+    if not isinstance(group_id, str) or not group_id.strip():
+        raise ValueError("A non-empty group_id is required.")
+    with room_lock(group_id):
+        saved = chat_state.append_group_message(group_id, sender.name, message.get("text"))
+        event = chat_state.public_group_message(saved)
+        # เลือกผู้รับจากสิทธิ์ที่บันทึกแล้ว ไม่ใช้สมาชิกใหม่ที่อาจ Join ระหว่างส่ง
+        with clients_lock:
+            recipients = [clients[name] for name in saved["visible_to"]
+                          if name in clients and (clients[name].supports_group_messages or clients[name] is sender)]
+        failed = []
+        for recipient in recipients:
+            try:
+                group = chat_state.group_snapshot(group_id, recipient.name)
+                recipient.send_group(group, event, request_id if recipient is sender else None)
+            except OSError:
+                failed.append(recipient.name)
+                disconnect_client(recipient)
+        response = {"request_id": request_id, "group_id": group_id, "message_id": event["message_id"]}
+        if failed:
+            sender.send({"type": "error", **response, "persisted": True,
+                         "text": "Message was saved, but live delivery failed for: " + ", ".join(failed) + "."})
+        else:
+            sender.send({"type": "sent", **response})
 
 
 def open_private(sender, message):
@@ -309,9 +376,12 @@ def handle_client(client, address):
                     client.send({"type": "error", "text": "Register a name before sending messages."})
             elif message_type == "message":
                 route_message(client, message)
-            elif message_type == "create_group":
+            elif message_type in ("create_group", "join_group"):
                 try:
-                    create_group(client, message)
+                    if message_type == "create_group":
+                        create_group(client, message)
+                    else:
+                        join_group(client, message)
                 except (ValueError, OSError) as error:
                     client.send({"type": "error", "request_id": message.get("request_id"), "text": str(error)})
             elif message_type in ("open_private", "private_message"):
@@ -327,6 +397,15 @@ def handle_client(client, address):
                 except (ValueError, OSError) as error:
                     client.send({"type": "error", "request_id": message.get("request_id"),
                                  "room_id": message.get("room_id"), "text": str(error)})
+            elif message_type in ("open_group", "group_message"):
+                try:
+                    if message_type == "open_group":
+                        open_group(client, message)
+                    else:
+                        deliver_group(client, message)
+                except (ValueError, OSError) as error:
+                    client.send({"type": "error", "request_id": message.get("request_id"),
+                                 "group_id": message.get("group_id"), "text": str(error)})
             else:
                 client.send({"type": "error", "text": "Unknown command after registration."})
     except ValueError as error:

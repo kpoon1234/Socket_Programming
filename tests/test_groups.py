@@ -124,7 +124,138 @@ class GroupTests(ServerTestCase):
         self.assertEqual(len(self.event(alice, "groups_updated")["groups"]), 2)
 
 
+    def test_join_uses_socket_identity_and_updates_everyone_without_joining_other_groups(self):
+        alice, _ = self.group_peer("alice")
+        bob, _ = self.group_peer("bob")
+        carol, _ = self.group_peer("carol")
+        first = self.create(alice, "Same name", "first")
+        second = self.create(alice, "Same name", "second")
+        for peer in (alice, bob, carol):
+            while self.event(peer, "groups_updated")["version"] < 2:
+                pass
+        bob.send({"type": "join_group", "group_id": first, "request_id": "join",
+                  "name": "carol", "members": ["carol"], "from": "alice"})
+        self.assertEqual(self.event(bob, "group_joined"),
+                         {"type": "group_joined", "group_id": first, "request_id": "join"})
+        snapshots = [self.event(peer, "groups_updated") for peer in (alice, bob, carol)]
+        self.assertEqual(snapshots, [snapshots[0]] * 3)
+        self.assertEqual(snapshots[0]["version"], 3)
+        groups = {group["group_id"]: group for group in snapshots[0]["groups"]}
+        self.assertEqual(groups[first]["members"], ["alice", "bob"])
+        self.assertEqual(groups[second]["members"], ["alice"])
+        _, late = self.group_peer("late")
+        self.assertEqual(late, snapshots[0])
+
+    def test_repeat_join_succeeds_without_duplicate_member_or_new_version(self):
+        alice, _ = self.group_peer("alice")
+        group_id = self.create(alice, "Group")
+        for request_id in ("creator", "repeat"):
+            alice.send({"type": "join_group", "group_id": group_id, "request_id": request_id})
+            self.assertEqual(self.event(alice, "group_joined")["request_id"], request_id)
+        bob, snapshot = self.group_peer("bob")
+        self.assertEqual(snapshot["version"], 1)
+        self.assertEqual(snapshot["groups"][0]["members"], ["alice"])
+        for request_id in ("first", "second"):
+            bob.send({"type": "join_group", "group_id": group_id, "request_id": request_id})
+            self.assertEqual(self.event(bob, "group_joined")["request_id"], request_id)
+        _, snapshot = self.group_peer("carol")
+        self.assertEqual(snapshot["version"], 2)
+        self.assertEqual(snapshot["groups"][0]["members"], ["alice", "bob"])
+
+    def test_invalid_join_and_unregistered_requests_leave_members_unchanged(self):
+        anonymous = self.peer()
+        anonymous.send({"type": "join_group", "group_id": "missing", "request_id": "early"})
+        self.assertIn("Register", anonymous.receive()["text"])
+        alice, _ = self.group_peer("alice")
+        group_id = self.create(alice, "Group")
+        bob, before = self.group_peer("bob")
+        for group in (None, "", "  ", 9, [], "missing"):
+            bob.send({"type": "join_group", "group_id": group, "request_id": "invalid"})
+            self.assertEqual(self.event(bob, "error")["request_id"], "invalid")
+        bob.send({"type": "join_group", "group_id": group_id})
+        self.assertIn("request_id", self.event(bob, "error")["text"])
+        _, after = self.group_peer("carol")
+        self.assertEqual(after, before)
+
+    def test_simultaneous_joiners_keep_every_member_and_snapshot_order(self):
+        alice, _ = self.group_peer("alice")
+        group_id = self.create(alice, "Group")
+        self.event(alice, "groups_updated")
+        peers = [self.group_peer(f"user-{index}")[0] for index in range(6)]
+        barrier = threading.Barrier(len(peers))
+
+        def join(item):
+            index, peer = item
+            barrier.wait(timeout=5)
+            peer.send({"type": "join_group", "group_id": group_id, "request_id": str(index)})
+            return self.event(peer, "group_joined")
+
+        with ThreadPoolExecutor(max_workers=len(peers)) as pool:
+            replies = list(pool.map(join, enumerate(peers)))
+        self.assertTrue(all(reply["group_id"] == group_id for reply in replies))
+        versions = []
+        while True:
+            snapshot = self.event(alice, "groups_updated")
+            versions.append(snapshot["version"])
+            if len(snapshot["groups"][0]["members"]) == 7:
+                break
+        self.assertEqual(versions, sorted(set(versions)))
+        self.assertEqual(snapshot["version"], 7)
+        self.assertCountEqual(snapshot["groups"][0]["members"], ["alice"] + [f"user-{i}" for i in range(6)])
+        self.assertEqual(ChatStateStore(self.state_path).groups_snapshot()["groups"], snapshot["groups"])
+
+    def test_joined_member_returns_after_disconnect_and_server_restart(self):
+        alice, _ = self.group_peer("alice")
+        group_id = self.create(alice, "Persistent group")
+        bob, _ = self.group_peer("bob")
+        bob.send({"type": "join_group", "group_id": group_id, "request_id": "join"})
+        self.event(bob, "group_joined")
+        expected = self.event(bob, "groups_updated")["groups"]
+        bob.close()
+        self.output.wait_for("Client disconnected: bob")
+        _, restored = self.group_peer("bob")
+        self.assertEqual(restored["groups"], expected)
+        self.server.send_signal(signal.SIGINT)
+        self.assertEqual(self.server.wait(timeout=5), 0)
+        self.output.finish()
+        self.start_server()
+        bob, restored = self.group_peer("bob")
+        self.assertEqual(restored["groups"], expected)
+        self.assertEqual(restored["version"], 0)
+        self.assertEqual(restored["groups"][0]["members"], ["alice", "bob"])
+        self.assertEqual(bob.wait_users(["bob"])["users"], ["bob"])
+
+
 class GroupFailureTests(unittest.TestCase):
+    def test_join_save_failure_preserves_members_version_and_disk_without_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = ChatStateStore(Path(directory) / "state.json")
+            group = store.create_group("Group", "alice")
+            previous = store.path.read_bytes()
+            sender = Mock()
+            sender.name = "bob"
+            with patch.object(server, "chat_state", store), patch.object(server, "broadcast_groups") as broadcast:
+                with patch("state_store.os.replace", side_effect=OSError("disk unavailable")):
+                    with self.assertRaises(OSError):
+                        server.join_group(sender, {"group_id": group["group_id"], "request_id": "fail"})
+                sender.send.assert_not_called()
+                broadcast.assert_not_called()
+            self.assertEqual(store.path.read_bytes(), previous)
+            self.assertEqual(store.groups_snapshot(), {"type": "groups_updated", "version": 1, "groups": [group]})
+
+    def test_joiner_disconnect_after_save_still_broadcasts_membership(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = ChatStateStore(Path(directory) / "state.json")
+            group = store.create_group("Group", "alice")
+            sender = Mock()
+            sender.name = "bob"
+            sender.send.side_effect = OSError("Disconnected")
+            with patch.object(server, "chat_state", store), patch.object(server, "broadcast_groups") as broadcast:
+                with self.assertRaises(OSError):
+                    server.join_group(sender, {"group_id": group["group_id"], "request_id": "join"})
+                broadcast.assert_called_once()
+            self.assertEqual(ChatStateStore(store.path).groups_snapshot()["groups"][0]["members"], ["alice", "bob"])
+
     def test_save_failure_sends_no_success_or_broadcast_and_preserves_state(self):
         with tempfile.TemporaryDirectory() as directory:
             store = ChatStateStore(Path(directory) / "state.json")

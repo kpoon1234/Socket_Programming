@@ -47,6 +47,30 @@ class StateStoreTests(unittest.TestCase):
         self.assertEqual([item["sequence"] for item in history], list(range(1, 26)))
         self.assertEqual(len({item["message_id"] for item in history}), 25)
 
+    def test_repeat_join_does_not_write_or_advance_version(self):
+        group = self.store.create_group("Group", "alice")
+        self.store.join_group(group["group_id"], "bob")
+        with patch.object(self.store, "save", side_effect=AssertionError("Unexpected write")):
+            joined = self.store.join_group(group["group_id"], "bob")
+        self.assertEqual(joined["members"], ["alice", "bob"])
+        self.assertEqual(self.store.groups_snapshot()["version"], 2)
+
+    def test_concurrent_repeated_joins_and_creation_preserve_all_records(self):
+        room = self.store.get_or_create_room("alice", "bob")
+        message = self.store.append_message(room["room_id"], "alice", "Private history")
+        group = self.store.create_group("Group", "alice")
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            tasks = [pool.submit(self.store.join_group, group["group_id"], f"user-{i % 4}") for i in range(12)]
+            tasks += [pool.submit(self.store.create_group, "Other group", "bob") for _ in range(4)]
+            for task in tasks:
+                task.result(timeout=5)
+        restored = ChatStateStore(self.path)
+        snapshot = restored.groups_snapshot()
+        self.assertEqual(len(snapshot["groups"]), 5)
+        self.assertCountEqual(snapshot["groups"][0]["members"], ["alice"] + [f"user-{i}" for i in range(4)])
+        self.assertEqual(self.store.groups_snapshot()["version"], 9)
+        self.assertEqual(restored.snapshot(room["room_id"], "bob")["messages"], [message])
+
     def test_invalid_existing_file_is_reported_without_overwriting(self):
         for value in ("broken-json", json.dumps({"schema_version": 999})):
             self.path.write_text(value)

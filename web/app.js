@@ -11,6 +11,9 @@ const connectionLabel = document.querySelector("#connection-label");
 const connectionDot = document.querySelector("#connection-dot");
 const usersList = document.querySelector("#users-list");
 const rooms = new Map();
+const groupRooms = new Map();
+const pendingJoins = new Map();
+const joinErrors = new Map();
 const requests = new Map();
 const roomTabs = document.querySelector("#room-tabs");
 const roomPanels = document.querySelector("#room-panels");
@@ -33,6 +36,8 @@ let activeRoomId = null;
 let lastOpenRequestId = null;
 let lastGroupsVersion = -1;
 let pendingGroupRequest = null;
+let currentGroups = [];
+let lastJoinRequestId = null;
 
 function setStatus(text, state) {
   statusText.textContent = text;
@@ -60,6 +65,10 @@ function clearSession() {
   lastUsersVersion = -1;
   lastGroupsVersion = -1;
   pendingGroupRequest = null;
+  currentGroups = [];
+  lastJoinRequestId = null;
+  pendingJoins.clear();
+  joinErrors.clear();
   groupsList.replaceChildren();
   document.querySelector("#group-count").textContent = "0";
   document.querySelector("#groups-empty").textContent = "Connect to see groups.";
@@ -75,6 +84,11 @@ function clearSession() {
     room.panel.remove();
   }
   rooms.clear();
+  for (const room of groupRooms.values()) {
+    room.tab.remove();
+    room.panel.remove();
+  }
+  groupRooms.clear();
   lastOpenRequestId = null;
   selectRoom(null);
   usersList.replaceChildren();
@@ -131,9 +145,10 @@ function showGroupForm(visible) {
   if (visible) groupNameInput.focus();
 }
 
-function renderGroups(groups) {
+function renderGroups() {
+  const scrollTop = groupsList.scrollTop;
   const fragment = document.createDocumentFragment();
-  for (const group of groups) {
+  for (const group of currentGroups) {
     const card = document.createElement("li");
     card.dataset.groupId = group.group_id;
     card.className = "rounded-lg border border-line/70 bg-panel/60 p-3";
@@ -150,14 +165,114 @@ function renderGroups(groups) {
     const isMember = group.members.includes(currentName);
     membership.className = isMember ? "mt-1 text-xs text-emerald-300" : "mt-1 text-xs text-soft";
     membership.textContent = isMember ? "You are a member" : "Not joined";
-    // รายการนี้แสดง metadata เท่านั้น ยังไม่เปิดห้องหรือรับข้อความกลุ่ม
     card.append(title, id, members, membership);
+    const action = document.createElement("button");
+    action.type = "button";
+    action.className = "mt-3 h-9 w-full rounded-lg border border-line bg-accent/30 px-3 text-xs font-medium transition hover:bg-accent focus-visible:outline-2 focus-visible:outline-slate-300 disabled:cursor-not-allowed disabled:opacity-50";
+    action.disabled = currentName === null || pendingJoins.has(group.group_id);
+    action.textContent = pendingJoins.has(group.group_id) ? "Joining…" : isMember ? "Open group" : "Join";
+    action.setAttribute("aria-label", `${isMember ? "Open group" : "Join"} ${group.name} (${group.group_id})`);
+    action.addEventListener("click", () => {
+      lastOpenRequestId = null;
+      lastJoinRequestId = null;
+      if (isMember) {
+        openGroup(group.group_id);
+      } else {
+        const requestId = sendCommand({ type: "join_group", group_id: group.group_id }, {
+          kind: "join_group", groupId: group.group_id, confirmed: false,
+        });
+        if (requestId === null) return;
+        lastJoinRequestId = requestId;
+        pendingJoins.set(group.group_id, requestId);
+        joinErrors.delete(group.group_id);
+        renderGroups();
+      }
+    });
+    card.append(action);
+    if (joinErrors.has(group.group_id)) {
+      const error = document.createElement("p");
+      error.className = "mt-2 break-words text-xs leading-5 text-rose-300";
+      error.setAttribute("role", "alert");
+      error.textContent = joinErrors.get(group.group_id);
+      card.append(error);
+    }
     fragment.append(card);
   }
   groupsList.replaceChildren(fragment);
-  document.querySelector("#group-count").textContent = String(groups.length);
+  groupsList.scrollTop = scrollTop;
+  document.querySelector("#group-count").textContent = String(currentGroups.length);
   document.querySelector("#groups-empty").textContent = "No groups yet. Create the first one.";
-  document.querySelector("#groups-empty").hidden = groups.length > 0;
+  document.querySelector("#groups-empty").hidden = currentGroups.length > 0;
+}
+
+function ensureGroupRoom(group) {
+  let room = groupRooms.get(group.group_id);
+  if (!room) {
+    const panel = document.querySelector("#group-room-template").content.firstElementChild.cloneNode(true);
+    panel.id = `panel-${group.group_id}`;
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.id = `tab-${group.group_id}`;
+    tab.className = "flex max-w-64 shrink-0 items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-slate-300";
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", "false");
+    tab.setAttribute("aria-controls", panel.id);
+    panel.setAttribute("aria-labelledby", tab.id);
+    const title = document.createElement("span");
+    title.className = "truncate";
+    const badge = document.createElement("span");
+    badge.hidden = true;
+    badge.className = "rounded-full bg-slate-200 px-1.5 text-xs text-slate-800";
+    tab.append(title, badge);
+    tab.addEventListener("click", () => openGroup(group.group_id));
+    room = { kind: "group", group_id: group.group_id, tab, panel, title, badge };
+    initializeComposer(room);
+    groupRooms.set(group.group_id, room);
+    roomTabs.append(tab);
+    roomPanels.append(panel);
+  }
+  room.name = group.name;
+  room.members = group.members;
+  room.title.textContent = `# ${group.name}`;
+  room.tab.title = `${group.name} (${group.group_id})`;
+  room.tab.setAttribute("aria-label", `Group ${group.name} (${group.group_id})`);
+  room.panel.querySelector("[data-group-name]").textContent = group.name;
+  room.panel.querySelector("[data-group-id]").textContent = group.group_id;
+  const members = group.members.map((name) => name === currentName ? `${name} (you)` : name).join(", ");
+  room.panel.querySelector("[data-group-members]").textContent = `Members: ${members}`;
+  room.panel.querySelector("[data-group-members]").title = members;
+  updateRoomControls(room);
+  return room;
+}
+
+function openGroup(groupId) {
+  lastOpenRequestId = null;
+  lastJoinRequestId = null;
+  const room = groupRooms.get(groupId);
+  if (!room) return;
+  selectRoom(groupId);
+  if (room.loaded) return;
+  lastOpenRequestId = sendCommand({ type: "open_group", group_id: groupId }, { kind: "open_group", roomId: groupId });
+  room.empty.textContent = "Loading conversation…";
+  room.error.hidden = true;
+}
+
+function completeGroupJoins() {
+  for (const [groupId, requestId] of pendingJoins) {
+    const request = requests.get(requestId);
+    const group = currentGroups.find((item) => item.group_id === groupId);
+    // รอทั้งคำตอบรับและ snapshot ที่ยืนยันสมาชิก ก่อนเปิดแท็บและปลดสถานะรอ
+    if (!request?.confirmed || !group?.members.includes(currentName)) continue;
+    pendingJoins.delete(groupId);
+    requests.delete(requestId);
+    joinErrors.delete(groupId);
+    if (requestId === lastJoinRequestId) {
+      openGroup(groupId);
+      groupRooms.get(groupId).tab.focus();
+      lastJoinRequestId = null;
+    }
+    setStatus(`Joined ${group.name}.`, "Online");
+  }
 }
 
 function sendCommand(command, context) {
@@ -173,6 +288,7 @@ function sendCommand(command, context) {
 
 function openPrivate(target) {
   lastOpenRequestId = null;
+  lastJoinRequestId = null;
   const known = target.room_id ? rooms.get(target.room_id) : [...rooms.values()].find((room) => room.peer === target.to);
   if (known) {
     selectRoom(known.room_id);
@@ -186,12 +302,21 @@ function openPrivate(target) {
 }
 
 function updateRoomControls(room) {
-  const available = currentName !== null && onlineUsers.includes(room.peer);
-  room.presence.textContent = available ? "Online" : "Offline";
+  const isGroup = room.kind === "group";
+  const available = currentName !== null && (isGroup ? room.members.includes(currentName) : onlineUsers.includes(room.peer));
+  room.presence.textContent = isGroup ? `${room.members.length} ${room.members.length === 1 ? "member" : "members"}` : available ? "Online" : "Offline";
   room.presence.classList.toggle("text-emerald-300", available);
   room.input.disabled = !available || !room.loaded;
-  room.input.placeholder = available ? "Write a message…" : `${room.peer} is offline`;
+  room.input.placeholder = !room.loaded ? "Loading conversation…" : available ? "Write a message…" : isGroup ? "You are not a member" : `${room.peer} is offline`;
   room.send.disabled = room.input.disabled || room.pending !== null || !room.input.value.trim();
+}
+
+function roomKey(room) {
+  return room.kind === "group" ? room.group_id : room.room_id;
+}
+
+function findRoom(roomId) {
+  return rooms.get(roomId) || groupRooms.get(roomId);
 }
 
 function selectRoom(roomId) {
@@ -200,8 +325,8 @@ function selectRoom(roomId) {
   document.querySelector("#overview-panel").hidden = !overview;
   overviewTab.setAttribute("aria-selected", String(overview));
   overviewTab.classList.toggle("bg-accent/80", overview);
-  for (const room of rooms.values()) {
-    const selected = room.room_id === roomId;
+  for (const room of [...rooms.values(), ...groupRooms.values()]) {
+    const selected = roomKey(room) === roomId;
     room.panel.hidden = !selected;
     room.tab.setAttribute("aria-selected", String(selected));
     room.tab.classList.toggle("bg-accent/80", selected);
@@ -234,15 +359,27 @@ function ensureRoom(metadata) {
   tab.append(title, badge);
   panel.setAttribute("aria-labelledby", tab.id);
   panel.querySelector("[data-peer]").textContent = peer;
-  const room = {
-    ...metadata, peer, tab, panel, badge, loaded: false, unread: 0, messages: new Map(), pending: null,
+  const room = { ...metadata, kind: "private", peer, tab, panel, badge };
+  initializeComposer(room);
+  tab.addEventListener("click", () => openPrivate({ room_id: room.room_id }));
+  rooms.set(room.room_id, room);
+  roomTabs.append(tab);
+  roomPanels.append(panel);
+  updateRoomControls(room);
+  return room;
+}
+
+function initializeComposer(room) {
+  const panel = room.panel;
+  Object.assign(room, {
+    loaded: false, unread: 0, messages: new Map(), pending: null,
     input: panel.querySelector("[data-input]"), send: panel.querySelector("[data-send]"),
     history: panel.querySelector("[data-history]"), list: panel.querySelector("[data-messages]"),
     empty: panel.querySelector("[data-empty]"), error: panel.querySelector("[data-error]"),
     presence: panel.querySelector("[data-presence]"), status: panel.querySelector("[data-send-status]"),
     failed: panel.querySelector("[data-failed]"), failedText: null,
-  };
-  room.input.id = `message-${metadata.room_id}`;
+  });
+  room.input.id = `message-${roomKey(room)}`;
   panel.querySelector("[data-message-label]").htmlFor = room.input.id;
   panel.querySelector("[data-composer]").addEventListener("submit", (event) => {
     event.preventDefault();
@@ -264,12 +401,6 @@ function ensureRoom(metadata) {
       room.input.focus();
     }
   });
-  tab.addEventListener("click", () => openPrivate({ room_id: room.room_id }));
-  rooms.set(room.room_id, room);
-  roomTabs.append(tab);
-  roomPanels.append(panel);
-  updateRoomControls(room);
-  return room;
 }
 
 function mergeMessages(room, messages) {
@@ -315,15 +446,17 @@ function submitMessage(room) {
   updateRoomControls(room);
   if (room.send.disabled) return;
   const text = room.input.value;
-  const requestId = sendCommand({ type: "private_message", room_id: room.room_id, text }, {
-    kind: "send", roomId: room.room_id, text,
-  });
+  const command = room.kind === "group"
+    ? { type: "group_message", group_id: room.group_id, text }
+    : { type: "private_message", room_id: room.room_id, text };
+  const requestId = sendCommand(command, { kind: "send", roomId: roomKey(room), text });
   if (requestId === null) return;
   room.pending = requestId;
   room.input.value = "";
   room.error.hidden = true;
   room.status.textContent = "Sending…";
   updateRoomControls(room);
+  room.input.focus();
 }
 
 function handleRoomOpened(event) {
@@ -350,8 +483,37 @@ function handlePrivateMessage(event) {
   }
 }
 
+function handleGroupOpened(event) {
+  const room = ensureGroupRoom(event);
+  room.loaded = true;
+  room.empty.textContent = "No messages since you joined. Say hello!";
+  mergeMessages(room, event.messages);
+  room.error.hidden = true;
+  const request = requests.get(event.request_id);
+  if (request?.kind === "open_group" && event.request_id === lastOpenRequestId) selectRoom(event.group_id);
+  requests.delete(event.request_id);
+  updateRoomControls(room);
+}
+
+function handleGroupMessage(event) {
+  const room = groupRooms.get(event.group_id);
+  if (!room) return;
+  const added = mergeMessages(room, [event]);
+  if (added && event.from !== currentName && activeRoomId !== event.group_id) {
+    room.unread += 1;
+    room.badge.textContent = String(room.unread);
+    room.badge.hidden = false;
+  }
+}
+
 function handleRequestError(event) {
   const request = requests.get(event.request_id);
+  if (request?.kind === "join_group" && pendingJoins.get(request.groupId) === event.request_id) {
+    pendingJoins.delete(request.groupId);
+    joinErrors.set(request.groupId, event.text);
+    renderGroups();
+    groupsList.querySelector(`[data-group-id="${CSS.escape(request.groupId)}"] button`)?.focus();
+  }
   if (request?.kind === "create_group" && event.request_id === pendingGroupRequest) {
     pendingGroupRequest = null;
     groupError.textContent = event.text;
@@ -359,7 +521,7 @@ function handleRequestError(event) {
     updateGroupControls();
     groupNameInput.focus();
   }
-  const room = rooms.get(request?.roomId);
+  const room = findRoom(request?.roomId);
   if (room) {
     room.error.textContent = event.text;
     room.error.hidden = false;
@@ -406,9 +568,23 @@ function handleEvent(event) {
     case "groups_updated":
       if (event.version > lastGroupsVersion) {
         lastGroupsVersion = event.version;
-        renderGroups(event.groups);
+        currentGroups = event.groups;
+        for (const group of currentGroups) {
+          if (group.members.includes(currentName)) ensureGroupRoom(group);
+        }
+        completeGroupJoins();
+        renderGroups();
       }
       break;
+    case "group_joined": {
+      const request = requests.get(event.request_id);
+      if (request?.kind === "join_group" && request.groupId === event.group_id) {
+        request.confirmed = true;
+        completeGroupJoins();
+        renderGroups();
+      }
+      break;
+    }
     case "group_created":
       if (requests.get(event.request_id)?.kind === "create_group" && event.request_id === pendingGroupRequest) {
         requests.delete(event.request_id);
@@ -428,12 +604,18 @@ function handleEvent(event) {
     case "private_message":
       handlePrivateMessage(event);
       break;
+    case "group_opened":
+      handleGroupOpened(event);
+      break;
+    case "group_message":
+      handleGroupMessage(event);
+      break;
     case "sent": {
       const request = requests.get(event.request_id);
-      const room = rooms.get(request?.roomId);
+      const room = findRoom(request?.roomId);
       if (room) {
         room.pending = null;
-        room.status.textContent = `Sent to ${room.peer}`;
+        room.status.textContent = room.kind === "group" ? "Saved and sent to online members." : `Sent to ${room.peer}`;
         updateRoomControls(room);
       }
       requests.delete(event.request_id);
@@ -471,6 +653,7 @@ groupForm.addEventListener("submit", (event) => {
 
 overviewTab.addEventListener("click", () => {
   lastOpenRequestId = null;
+  lastJoinRequestId = null;
   selectRoom(null);
 });
 

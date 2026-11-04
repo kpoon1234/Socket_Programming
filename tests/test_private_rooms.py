@@ -126,6 +126,8 @@ class PrivateRoomTests(ServerTestCase):
         alice, _ = self.room_peer("alice")
         bob, _ = self.room_peer("bob")
         room = self.open_room(alice, "bob")
+        # ระบายรายชื่อเก่าตอน alice อยู่คนเดียว ก่อนรอเหตุการณ์ที่ bob หลุดจริง
+        alice.wait_users(["alice", "bob"])
         for text in ("", "  \n", None, 42):
             alice.send({"type": "private_message", "room_id": room["room_id"], "text": text, "request_id": "invalid"})
             self.assertEqual(alice.receive()["type"], "error")
