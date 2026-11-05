@@ -197,7 +197,7 @@ class AIProviderTests(unittest.TestCase):
                     ai_summarize.summarize_text("instructions", "data")
                 except SummaryError as error:
                     self.assertEqual(error.code, code)
-                    rendered = "".join(traceback.format_exception(error))
+                    rendered = "".join(traceback.format_exception(type(error), error, error.__traceback__))
                     self.assertNotIn("sensitive-provider-body", rendered)
                     self.assertNotIn("fake-secret", rendered)
                 else:

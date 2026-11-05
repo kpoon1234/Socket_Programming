@@ -11,6 +11,14 @@ try:
 except ImportError:
     aiohttp = None
 
+try:
+    from asyncio import timeout as async_timeout
+except ImportError:
+    try:
+        from async_timeout import timeout as async_timeout
+    except ImportError:
+        async_timeout = None
+
 if aiohttp is not None:
     from aiohttp.test_utils import TestClient, TestServer
     from web_bridge import BrowserSession, create_app
@@ -45,7 +53,7 @@ class SummaryBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(self.client.close)
 
     async def event(self, websocket, kind):
-        async with asyncio.timeout(5):
+        async with async_timeout(5):
             while True:
                 event = await websocket.receive_json()
                 if event["type"] == kind:
@@ -78,7 +86,7 @@ class SummaryBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(summary["summary"])[0]["text"], "hold-ai งานส่งวันศุกร์")
         await bob.send_json({"type": "message", "to": "bob", "text": "probe"})
         observed = []
-        async with asyncio.timeout(5):
+        async with async_timeout(5):
             while True:
                 event = await bob.receive_json()
                 observed.append(event["type"])
