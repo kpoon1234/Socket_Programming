@@ -12,6 +12,7 @@ from aiohttp import WSMsgType, web
 from client_network import NetworkClient
 
 WEB_ROOT = Path(__file__).resolve().parent / "web"
+PROJECT_ROOT = Path(__file__).resolve().parent
 SOCKETS = web.AppKey("sockets", set)
 
 
@@ -135,7 +136,8 @@ async def javascript_handler(request):
 
 
 async def e2ee_javascript_handler(request):
-    return web.FileResponse(WEB_ROOT / "e2ee.js", headers={"Cache-Control": "no-store"})
+    e2ee_path = PROJECT_ROOT / "feature" / "E2EE" / "e2ee.js"
+    return web.FileResponse(e2ee_path, headers={"Cache-Control": "no-store"})
 
 
 async def shutdown(app):
@@ -148,6 +150,8 @@ def create_app():
     app.router.add_get("/", index_handler)
     app.router.add_get("/app.js", javascript_handler)
     app.router.add_get("/e2ee.js", e2ee_javascript_handler)
+    app.router.add_get("/feature/E2EE/e2ee.js", e2ee_javascript_handler)
+    app.router.add_get("/assets/e2ee.js", e2ee_javascript_handler)
     app.router.add_get("/ws", websocket_handler)
     app.router.add_static("/assets/", WEB_ROOT / "assets")
     app.on_shutdown.append(shutdown)
