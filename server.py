@@ -10,8 +10,8 @@ from state_store import ChatStateStore
 from feature.summarize.ai_summarize import SummaryError
 from feature.summarize.service import summarize_messages
 
-HOST = "0.0.0.0"
-PORT = 5000
+HOST = os.environ.get("HOST", "0.0.0.0")
+PORT = int(os.environ.get("PORT", "5000"))
 STATE_PATH = Path(os.environ.get("CHAT_STATE_PATH", Path(__file__).resolve().parent / "output" / "chat_state.json"))
 
 # กุญแจนี้ป้องกันการอ่านและแก้รายชื่อพร้อมกันจากหลาย thread
