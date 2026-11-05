@@ -2,6 +2,24 @@
 @source "./index.html";
 @source "./app.js";
 
+dialog:not([open]) {
+  display: none !important;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+#pin-modal:not([hidden]),
+#secret-choice-modal:not([hidden]),
+[data-secret-prompt]:not([hidden]) {
+  display: flex !important;
+}
+
+[data-secret-badge]:not([hidden]) {
+  display: inline-flex !important;
+}
+
 @theme {
   --color-page: #191a1c;
   --color-panel: #202226;
