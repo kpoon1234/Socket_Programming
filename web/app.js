@@ -97,6 +97,7 @@ function clearSession() {
     room.panel.remove();
   }
   groupRooms.clear();
+  window.E2EE?.clearAll?.();
   lastOpenRequestId = null;
   selectRoom(null);
   usersList.replaceChildren();
@@ -233,6 +234,8 @@ function renderGroups() {
 
 function ensureGroupRoom(group) {
   let room = groupRooms.get(group.group_id);
+  const foundGroup = currentGroups.find((g) => g.group_id === group.group_id);
+  const creator = group.creator || foundGroup?.creator;
   if (!room) {
     const panel = document.querySelector("#group-room-template").content.firstElementChild.cloneNode(true);
     panel.id = `panel-${group.group_id}`;
@@ -251,7 +254,7 @@ function ensureGroupRoom(group) {
     badge.className = "rounded-full bg-slate-200 px-1.5 text-xs text-slate-800";
     tab.append(title, badge);
     tab.addEventListener("click", () => openGroup(group.group_id));
-    room = { kind: "group", group_id: group.group_id, tab, panel, title, badge };
+    room = { kind: "group", group_id: group.group_id, tab, panel, title, badge, creator };
     initializeComposer(room);
     groupRooms.set(group.group_id, room);
     roomTabs.append(tab);
@@ -259,13 +262,22 @@ function ensureGroupRoom(group) {
   }
   room.name = group.name;
   room.members = group.members;
+  if (creator) {
+    room.creator = creator;
+  }
   room.title.textContent = `# ${group.name}`;
   room.tab.title = group.name;
   room.tab.setAttribute("aria-label", `Group ${group.name}`);
   room.panel.querySelector("[data-group-name]").textContent = group.name;
   updateGroupMemberLabels(room);
   room.leave.setAttribute("aria-label", `Leave group ${group.name}`);
+  if (group.is_secret === true) {
+    setRoomSecretMode(room, true);
+  } else if (group.is_secret === false) {
+    setRoomSecretMode(room, false);
+  }
   updateRoomControls(room);
+  updateSecretChatUI(room);
   return room;
 }
 
@@ -433,9 +445,43 @@ function findRoom(roomId) {
   return rooms.get(roomId) || groupRooms.get(roomId);
 }
 
+function formatLockedCipher(rawText) {
+  if (!rawText) return "••••••••••••••••••••••••••••";
+  const raw = rawText.replace(/^🔒\s*enc:v1:/, "");
+  const parts = raw.split(":").filter(Boolean);
+  if (parts.length >= 3) {
+    const cipher = parts[2].replace(/=/g, "");
+    if (cipher.length < 24) {
+      const tag = parts[1].replace(/=/g, "");
+      return (tag + cipher).slice(0, 36);
+    }
+    return cipher.slice(0, 48);
+  }
+  return raw.slice(0, 48);
+}
+
 function selectRoom(roomId) {
+  const previousRoomId = activeRoomId;
   activeRoomId = roomId;
+
+  // When leaving a chat room, lock it only if there are encrypted messages
+  if (previousRoomId && previousRoomId !== roomId) {
+    const prevRoom = findRoom(previousRoomId);
+    const hasEncrypted = prevRoom?.messages && [...prevRoom.messages.values()].some((m) => window.E2EE?.isEncrypted(m.text));
+    if (hasEncrypted) {
+      window.E2EE?.lockRoom(previousRoomId);
+      if (prevRoom) {
+        prevRoom.unlockedPin = null;
+        prevRoom.pinPrompted = false;
+        renderMessages(prevRoom);
+      }
+    }
+  }
+
   const overview = roomId === null;
+  if (overview) {
+    closePinDialog();
+  }
   document.querySelector("#overview-panel").hidden = !overview;
   overviewTab.setAttribute("aria-selected", String(overview));
   overviewTab.classList.toggle("bg-accent/80", overview);
@@ -448,6 +494,12 @@ function selectRoom(roomId) {
       room.unread = 0;
       room.badge.hidden = true;
       room.history.scrollTop = room.history.scrollHeight;
+      updateE2EEButton(room);
+      room.pinPrompted = false; // Always allow PIN prompt on entering room!
+      if (window.E2EE?.isRoomUnlocked(roomKey(room))) {
+        closePinDialog();
+      }
+      renderMessages(room);
     }
   }
 }
@@ -479,6 +531,11 @@ function ensureRoom(metadata) {
   rooms.set(room.room_id, room);
   roomTabs.append(tab);
   roomPanels.append(panel);
+  if (metadata.is_secret === true) {
+    setRoomSecretMode(room, true);
+  } else if (metadata.is_secret === false) {
+    setRoomSecretMode(room, false);
+  }
   updateRoomControls(room);
   return room;
 }
@@ -498,9 +555,25 @@ function initializeComposer(room) {
     summaryPanel, summaryText: summaryPanel.querySelector("[data-summary-text]"),
     summaryStatus: summaryPanel.querySelector("[data-summary-status]"),
     summaryError: summaryPanel.querySelector("[data-summary-error]"),
+    secretBadge: panel.querySelector("[data-secret-badge]"),
+    secretPrompt: panel.querySelector("[data-secret-prompt]"),
+    secretYes: panel.querySelector("[data-secret-yes]"),
+    secretNo: panel.querySelector("[data-secret-no]"),
+    isSecretChat: null,
+    pendingSendText: null,
   });
+  if (room.secretPrompt) {
+    room.secretPrompt.hidden = true;
+  }
   room.summarize.addEventListener("click", () => requestSummary(room));
   room.leave?.addEventListener("click", () => requestLeave(room));
+  room.secretYes?.addEventListener("click", () => activateSecretChat(room));
+  room.secretNo?.addEventListener("click", () => {
+    setRoomSecretMode(room, false);
+    if (window.E2EE?.createNormalSyncMessage) {
+      sendSyncPayload(room, window.E2EE.createNormalSyncMessage());
+    }
+  });
   room.input.id = `message-${roomKey(room)}`;
   panel.querySelector("[data-message-label]").htmlFor = room.input.id;
   panel.querySelector("[data-composer]").addEventListener("submit", (event) => {
@@ -523,6 +596,82 @@ function initializeComposer(room) {
       room.input.focus();
     }
   });
+  updateSecretChatUI(room);
+}
+
+function getStoredSecretMode(rKey) {
+  if (!currentName) return null;
+  const val = localStorage.getItem(`secret_chat_${currentName}_${rKey}`);
+  if (val === "true") return true;
+  if (val === "false") return false;
+  return null;
+}
+
+function setRoomSecretMode(room, isSecret) {
+  const rKey = roomKey(room);
+  room.isSecretChat = isSecret;
+  if (currentName) {
+    localStorage.setItem(`secret_chat_${currentName}_${rKey}`, isSecret ? "true" : "false");
+  }
+  updateSecretChatUI(room);
+}
+
+function isRoomSecret(room) {
+  if (!room) return false;
+  const rKey = roomKey(room);
+
+  // If set on room instance
+  if (room.isSecretChat === true) return true;
+  if (room.isSecretChat === false) return false;
+
+  // Check stored preference first
+  const stored = getStoredSecretMode(rKey);
+  if (stored !== null) {
+    room.isSecretChat = stored;
+    return stored;
+  }
+
+  // Check messages
+  if (room.messages && room.messages.size > 0) {
+    const hasEncrypted = [...room.messages.values()].some((m) => window.E2EE?.isEncrypted(m.text));
+    if (hasEncrypted) {
+      room.isSecretChat = true;
+      if (currentName) localStorage.setItem(`secret_chat_${currentName}_${rKey}`, "true");
+      return true;
+    }
+    // Has messages, and none are encrypted -> definitely normal chat
+    room.isSecretChat = false;
+    if (currentName) localStorage.setItem(`secret_chat_${currentName}_${rKey}`, "false");
+    return false;
+  }
+
+  return null; // Not chosen yet
+}
+
+function updateSecretChatUI(room) {
+  if (!room) return;
+  const status = isRoomSecret(room);
+
+  if (room.secretBadge) {
+    room.secretBadge.hidden = status !== true;
+  }
+
+  if (room.secretPrompt) {
+    const hasMessages = room.messages && room.messages.size > 0;
+    if (room.kind === "group") {
+      // In group chats: ONLY the verified creator of a brand new group with 0 messages can see the prompt.
+      // Anyone else who enters, joins, or connects must NEVER see this prompt!
+      const isCreator = Boolean(room.creator && currentName && room.creator === currentName);
+      if (isCreator && status === null && !hasMessages) {
+        room.secretPrompt.hidden = false;
+      } else {
+        room.secretPrompt.hidden = true;
+      }
+    } else {
+      // Private 1-on-1 chats:
+      room.secretPrompt.hidden = status !== null || hasMessages;
+    }
+  }
 }
 
 function refreshSummaryControls() {
@@ -583,26 +732,110 @@ function handleSummary(event) {
   if (activeRoomId === roomKey(room)) room.history.scrollTop = room.history.scrollHeight;
 }
 
-function mergeMessages(room, messages) {
-  let added = false;
-  for (const message of messages) {
-    if (!room.messages.has(message.message_id)) {
-      room.messages.set(message.message_id, message);
-      added = true;
+let pendingChoiceRoom = null;
+const secretChoiceModal = document.querySelector("#secret-choice-modal");
+const choiceSecretYes = document.querySelector("#choice-secret-yes");
+const choiceSecretNo = document.querySelector("#choice-secret-no");
+
+function openSecretChoiceModal(room, rawText) {
+  pendingChoiceRoom = room;
+  if (rawText) {
+    room.pendingSendText = rawText;
+  }
+  if (secretChoiceModal) {
+    secretChoiceModal.hidden = false;
+  }
+}
+
+function closeSecretChoiceModal() {
+  if (secretChoiceModal) {
+    secretChoiceModal.hidden = true;
+  }
+}
+
+choiceSecretYes?.addEventListener("click", () => {
+  const room = pendingChoiceRoom || findRoom(activeRoomId);
+  closeSecretChoiceModal();
+  if (room) {
+    activateSecretChat(room);
+  }
+});
+
+choiceSecretNo?.addEventListener("click", () => {
+  const room = pendingChoiceRoom || findRoom(activeRoomId);
+  closeSecretChoiceModal();
+  if (room) {
+    setRoomSecretMode(room, false);
+    if (window.E2EE?.createNormalSyncMessage) {
+      sendSyncPayload(room, window.E2EE.createNormalSyncMessage());
+    }
+    if (room.pendingSendText) {
+      const text = room.pendingSendText;
+      room.pendingSendText = null;
+      sendMessagePayload(room, text);
     }
   }
-  if (!added) return false;
+});
+
+secretChoiceModal?.addEventListener("click", (e) => {
+  if (e.target === secretChoiceModal) {
+    closeSecretChoiceModal();
+  }
+});
+
+function activateSecretChat(room) {
+  const targetRoom = room || findRoom(activeRoomId);
+  if (!targetRoom) return;
+  currentPinRoom = targetRoom;
+  const rKey = roomKey(targetRoom);
+  if (window.E2EE?.isRoomUnlocked(rKey)) {
+    setRoomSecretMode(targetRoom, true);
+    if (targetRoom.pendingSendText) {
+      const text = targetRoom.pendingSendText;
+      targetRoom.pendingSendText = null;
+      window.E2EE.encrypt(rKey, text).then((enc) => sendMessagePayload(targetRoom, enc));
+    }
+    return;
+  }
+  openPinDialog(targetRoom);
+}
+
+async function renderMessages(room) {
   const nearBottom = room.history.scrollHeight - room.history.scrollTop - room.history.clientHeight < 80;
   const fragment = document.createDocumentFragment();
+  const rKey = roomKey(room);
+  const isUnlocked = window.E2EE?.isRoomUnlocked(rKey);
+
+  let hasLockedMessages = false;
+
   for (const message of [...room.messages.values()].sort((a, b) => a.sequence - b.sequence)) {
     const own = message.from === currentName;
+    const isEnc = window.E2EE?.isEncrypted(message.text);
+    let displayText = message.text;
+    let isLocked = false;
+
+    if (isEnc) {
+      if (window.E2EE) {
+        const decResult = await window.E2EE.decrypt(rKey, message.text);
+        if (decResult.success) {
+          displayText = decResult.text;
+        } else {
+          hasLockedMessages = true;
+          isLocked = true;
+          // Display the scrambled cipher text without length-leaking short cuts
+          displayText = formatLockedCipher(message.text);
+        }
+      }
+    }
+
     const bubble = document.createElement("article");
     bubble.dataset.messageId = message.message_id;
     bubble.className = own
       ? "max-w-[88%] self-end rounded-2xl rounded-br-sm bg-accent px-4 py-3 sm:max-w-[75%]"
       : "max-w-[88%] self-start rounded-2xl rounded-bl-sm bg-sidebar px-4 py-3 sm:max-w-[75%]";
+
     const caption = document.createElement("div");
-    caption.className = "mb-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-soft";
+    caption.className = "mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-soft";
     const author = document.createElement("span");
     author.textContent = own ? `${message.from} (you)` : message.from;
     const time = document.createElement("time");
@@ -610,27 +843,67 @@ function mergeMessages(room, messages) {
     time.textContent = new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     time.title = new Date(message.timestamp).toLocaleString();
     caption.append(author, time);
+
     const content = document.createElement("p");
     content.className = "whitespace-pre-wrap break-words text-sm leading-6";
-    content.textContent = message.text;
+    if (isLocked) {
+      content.className += " font-mono text-xs opacity-75 cursor-pointer select-none";
+      content.title = "Tap to enter Passcode";
+      content.onclick = () => openPinDialog(room);
+    }
+    content.textContent = displayText;
     bubble.append(caption, content);
     fragment.append(bubble);
   }
+
   room.list.replaceChildren(fragment);
   if (!room.summaryPanel.hidden) positionSummary(room);
   room.empty.hidden = room.messages.size > 0;
   if (nearBottom) room.history.scrollTop = room.history.scrollHeight;
+
+  updateSecretChatUI(room);
+
+  // Auto-prompt Passcode dialog if room has locked messages and hasn't been prompted yet
+  if (hasLockedMessages && !isUnlocked && !room.pinPrompted && activeRoomId === rKey) {
+    room.pinPrompted = true;
+    openPinDialog(room);
+  }
+}
+
+function mergeMessages(room, messages) {
+  let added = false;
+  for (const message of messages) {
+    if (
+      window.E2EE?.isSyncMessage(message.text) ||
+      window.E2EE?.isNormalSyncMessage?.(message.text) ||
+      (typeof message.text === "string" && message.text.includes("mode:normal"))
+    ) {
+      continue;
+    }
+    if (!room.messages.has(message.message_id)) {
+      room.messages.set(message.message_id, message);
+      added = true;
+    }
+  }
+  if (!added) return false;
+  renderMessages(room);
   return true;
 }
 
-function submitMessage(room) {
-  updateRoomControls(room);
-  if (room.send.disabled) return;
-  const text = room.input.value;
+function sendSyncPayload(room, text) {
+  const rKey = roomKey(room);
   const command = room.kind === "group"
     ? { type: "group_message", group_id: room.group_id, text }
     : { type: "private_message", room_id: room.room_id, text };
-  const requestId = sendCommand(command, { kind: "send", roomId: roomKey(room), text });
+  sendCommand(command, { kind: "sync", roomId: rKey, text });
+}
+
+function sendMessagePayload(room, text) {
+  const rKey = roomKey(room);
+  const command = room.kind === "group"
+    ? { type: "group_message", group_id: room.group_id, text }
+    : { type: "private_message", room_id: room.room_id, text };
+  const requestId = sendCommand(command, { kind: "send", roomId: rKey, text });
   if (requestId === null) return;
   room.pending = requestId;
   room.input.value = "";
@@ -640,22 +913,320 @@ function submitMessage(room) {
   room.input.focus();
 }
 
+async function submitMessage(room) {
+  updateRoomControls(room);
+  if (room.send.disabled) return;
+  const rawText = room.input.value;
+  if (!rawText.trim()) return;
+  const rKey = roomKey(room);
+
+  let secretStatus = isRoomSecret(room);
+  if (room.kind === "group") {
+    const isCreator = Boolean(room.creator && currentName && room.creator === currentName);
+    if (!isCreator && secretStatus === null) {
+      secretStatus = false;
+    }
+  }
+  if (secretStatus === null) {
+    openSecretChoiceModal(room, rawText);
+    return;
+  }
+
+  if (secretStatus === true) {
+    if (!window.E2EE?.isRoomUnlocked(rKey)) {
+      if (room.unlockedPin) {
+        await window.E2EE.unlockRoom(rKey, room.unlockedPin);
+      } else {
+        room.pendingSendText = rawText;
+        openPinDialog(room);
+        return;
+      }
+    }
+    const text = await window.E2EE.encrypt(rKey, rawText);
+    sendMessagePayload(room, text);
+  } else {
+    sendMessagePayload(room, rawText);
+  }
+}
+
+let currentPinRoom = null;
+const pinModal = document.querySelector("#pin-modal") || document.querySelector("#pin-dialog");
+const pinDotsContainer = document.querySelector("#pin-dots");
+const pinError = document.querySelector("#pin-error");
+const pinCancelBtn = document.querySelector("#pin-cancel-btn");
+const pinCloseBtn = document.querySelector("#pin-close-btn");
+const pinDeleteBtn = document.querySelector("#pin-delete-btn");
+const pinTitle = document.querySelector("#pin-title");
+const pinDesc = document.querySelector("#pin-description");
+
+function isPinDialogOpen() {
+  return Boolean(pinModal && !pinModal.hidden);
+}
+
+// Backward-compatibility alias
+const pinDialog = pinModal;
+if (pinDialog) {
+  pinDialog.showModal = () => openPinDialog();
+  pinDialog.close = () => closePinDialog();
+  Object.defineProperty(pinDialog, "open", {
+    get: () => isPinDialogOpen(),
+    set: (v) => { if (pinModal) pinModal.hidden = !v; }
+  });
+}
+
+let enteredDigits = [];
+
+function updatePasscodeDots() {
+  if (!pinDotsContainer) return;
+  const dots = pinDotsContainer.querySelectorAll(".pin-dot");
+  dots.forEach((dot, idx) => {
+    if (idx < enteredDigits.length) {
+      dot.classList.add("pin-dot-filled");
+    } else {
+      dot.classList.remove("pin-dot-filled");
+    }
+  });
+}
+
+function clearPasscode(shake = false) {
+  enteredDigits = [];
+  updatePasscodeDots();
+  if (shake && pinDotsContainer) {
+    pinDotsContainer.classList.add("shake-anim");
+    setTimeout(() => {
+      pinDotsContainer?.classList.remove("shake-anim");
+    }, 400);
+  }
+}
+
+function pressKeypadDigit(digit) {
+  if (enteredDigits.length >= 4) return;
+  enteredDigits.push(digit);
+  updatePasscodeDots();
+  if (enteredDigits.length === 4) {
+    setTimeout(() => {
+      verifyAndSubmitPasscode(enteredDigits.join(""));
+    }, 80);
+  }
+}
+
+function deleteKeypadDigit() {
+  if (enteredDigits.length > 0) {
+    enteredDigits.pop();
+    updatePasscodeDots();
+  }
+}
+
+// Bind 0-9 keypad buttons
+document.querySelectorAll(".pin-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const val = btn.dataset.val;
+    if (val !== undefined) pressKeypadDigit(val);
+  });
+});
+
+function cancelPinDialog() {
+  if (currentPinRoom) {
+    currentPinRoom.pendingSendText = null;
+  }
+  closePinDialog();
+}
+
+pinDeleteBtn?.addEventListener("click", deleteKeypadDigit);
+pinCancelBtn?.addEventListener("click", cancelPinDialog);
+pinCloseBtn?.addEventListener("click", cancelPinDialog);
+
+// Click on dimmed backdrop (outside card) closes modal
+pinModal?.addEventListener("click", (e) => {
+  if (e.target === pinModal) {
+    cancelPinDialog();
+  }
+});
+
+// Physical keyboard listener
+window.addEventListener("keydown", (e) => {
+  if (!isPinDialogOpen()) return;
+  if (e.key >= "0" && e.key <= "9") {
+    e.preventDefault();
+    pressKeypadDigit(e.key);
+  } else if (e.key === "Backspace") {
+    e.preventDefault();
+    deleteKeypadDigit();
+  } else if (e.key === "Escape") {
+    cancelPinDialog();
+  }
+});
+
+function updateE2EEButton(room) {
+  // Presence and header UI are kept completely normal and clean
+}
+
+function openPinDialog(room) {
+  const targetRoom = room || findRoom(activeRoomId);
+  if (!targetRoom) return;
+  const rKey = roomKey(targetRoom);
+  if (activeRoomId !== rKey) return;
+
+  currentPinRoom = targetRoom;
+  clearPasscode(false);
+  if (pinError) {
+    pinError.hidden = true;
+    pinError.textContent = "";
+  }
+
+  const encryptedSamples = [...targetRoom.messages.values()]
+    .map((m) => m.text)
+    .filter((t) => window.E2EE?.isEncrypted(t));
+
+  if (encryptedSamples.length > 0) {
+    if (pinTitle) pinTitle.textContent = "Enter Passcode";
+    if (pinDesc) pinDesc.textContent = "Enter 4-digit PIN to decrypt chat";
+  } else {
+    if (pinTitle) pinTitle.textContent = "Set 4-Digit Passcode";
+    if (pinDesc) pinDesc.textContent = "Choose a 4-digit PIN to secure this chat";
+  }
+
+  if (pinModal) {
+    pinModal.hidden = false;
+  }
+}
+
+function closePinDialog() {
+  if (pinModal) {
+    pinModal.hidden = true;
+  }
+  clearPasscode(false);
+}
+
+async function verifyAndSubmitPasscode(pin) {
+  const room = currentPinRoom || findRoom(activeRoomId);
+  if (!room) {
+    if (pinError) {
+      pinError.textContent = "No conversation selected.";
+      pinError.hidden = false;
+    }
+    clearPasscode(true);
+    return;
+  }
+  if (!window.E2EE) {
+    if (pinError) {
+      pinError.textContent = "E2EE security module error.";
+      pinError.hidden = false;
+    }
+    clearPasscode(true);
+    return;
+  }
+
+  const rKey = roomKey(room);
+  try {
+    const encryptedSamples = [...room.messages.values()]
+      .map((m) => m.text)
+      .filter((t) => window.E2EE.isEncrypted(t));
+
+    const isInitialSetup = encryptedSamples.length === 0;
+
+    if (!isInitialSetup) {
+      const isValid = await window.E2EE.testPin(rKey, pin, encryptedSamples);
+      if (!isValid) {
+        if (pinError) {
+          pinError.textContent = "Incorrect Passcode";
+          pinError.hidden = false;
+        }
+        clearPasscode(true);
+        return;
+      }
+    }
+
+    await window.E2EE.unlockRoom(rKey, pin);
+    room.unlockedPin = pin;
+    setRoomSecretMode(room, true);
+
+    // Sync secret chat activation & PIN to all participants in the room
+    if (isInitialSetup && window.E2EE?.createSyncMessage) {
+      sendSyncPayload(room, window.E2EE.createSyncMessage(pin));
+    }
+
+    const textToSend = room.pendingSendText;
+    room.pendingSendText = null;
+    closePinDialog();
+    clearPasscode(false);
+    updateE2EEButton(room);
+    await renderMessages(room);
+    updateRoomControls(room);
+
+    if (textToSend) {
+      const encText = await window.E2EE.encrypt(rKey, textToSend);
+      sendMessagePayload(room, encText);
+    } else {
+      room.input?.focus();
+    }
+  } catch (err) {
+    if (pinError) {
+      pinError.textContent = err.message || "Failed to unlock";
+      pinError.hidden = false;
+    }
+    clearPasscode(true);
+  }
+}
+
 function handleRoomOpened(event) {
   const room = ensureRoom(event);
   room.loaded = true;
   room.empty.textContent = "No messages yet. Say hello!";
-  mergeMessages(room, event.messages);
   room.error.hidden = true;
+
+  // Detect if history has secret chat or normal chat signals
+  let foundSecret = event.is_secret === true;
+  let foundNormal = event.is_secret === false;
+  for (const m of event.messages) {
+    if (window.E2EE?.isSyncMessage(m.text) || window.E2EE?.isEncrypted(m.text)) {
+      foundSecret = true;
+      break;
+    }
+    if (window.E2EE?.isNormalSyncMessage?.(m.text) || (typeof m.text === "string" && m.text.includes("mode:normal"))) {
+      foundNormal = true;
+    }
+  }
+
+  if (foundSecret) {
+    setRoomSecretMode(room, true);
+  } else if (foundNormal) {
+    setRoomSecretMode(room, false);
+  }
+
   const requested = requests.get(event.request_id);
-  if ((requested?.kind === "open" && event.request_id === lastOpenRequestId) || activeRoomId === null) {
+  const shouldSelect = requested?.kind === "open" && event.request_id === lastOpenRequestId;
+  if (shouldSelect) {
     selectRoom(room.room_id);
   }
+
+  mergeMessages(room, event.messages);
+  updateSecretChatUI(room);
   requests.delete(event.request_id);
   updateRoomControls(room);
 }
 
 function handlePrivateMessage(event) {
   const room = ensureRoom({ room_id: event.room_id, members: [event.from, event.to] });
+  if (window.E2EE?.isSyncMessage(event.text)) {
+    const pin = window.E2EE.extractSyncPin(event.text);
+    if (pin) {
+      setRoomSecretMode(room, true);
+      room.unlockedPin = pin;
+      updateSecretChatUI(room);
+      window.E2EE.unlockRoom(roomKey(room), pin).then(() => {
+        updateSecretChatUI(room);
+        renderMessages(room);
+        updateRoomControls(room);
+      });
+    }
+    return;
+  }
+  if (window.E2EE?.isNormalSyncMessage?.(event.text)) {
+    setRoomSecretMode(room, false);
+    updateSecretChatUI(room);
+    return;
+  }
   const added = mergeMessages(room, [event]);
   if (added && event.from !== currentName && activeRoomId !== room.room_id) {
     room.unread += 1;
@@ -672,10 +1243,35 @@ function handleGroupOpened(event) {
   const room = ensureGroupRoom(event);
   room.loaded = true;
   room.empty.textContent = "No messages since you joined. Say hello!";
-  mergeMessages(room, event.messages);
   room.error.hidden = true;
+
+  // Detect if history has secret chat or normal chat signals
+  let foundSecret = event.is_secret === true;
+  let foundNormal = event.is_secret === false;
+  for (const m of event.messages) {
+    if (window.E2EE?.isSyncMessage(m.text) || window.E2EE?.isEncrypted(m.text)) {
+      foundSecret = true;
+      break;
+    }
+    if (window.E2EE?.isNormalSyncMessage?.(m.text) || (typeof m.text === "string" && m.text.includes("mode:normal"))) {
+      foundNormal = true;
+    }
+  }
+
+  if (foundSecret) {
+    setRoomSecretMode(room, true);
+  } else if (foundNormal) {
+    setRoomSecretMode(room, false);
+  }
+
   const request = requests.get(event.request_id);
-  if (request?.kind === "open_group" && event.request_id === lastOpenRequestId) selectRoom(event.group_id);
+  const shouldSelect = request?.kind === "open_group" && event.request_id === lastOpenRequestId;
+  if (shouldSelect) {
+    selectRoom(event.group_id);
+  }
+
+  mergeMessages(room, event.messages);
+  updateSecretChatUI(room);
   requests.delete(event.request_id);
   updateRoomControls(room);
 }
@@ -684,6 +1280,25 @@ function handleGroupMessage(event) {
   if (departedGroups.has(event.group_id) && !pendingJoins.has(event.group_id)) return;
   const room = groupRooms.get(event.group_id);
   if (!room) return;
+  if (window.E2EE?.isSyncMessage(event.text)) {
+    const pin = window.E2EE.extractSyncPin(event.text);
+    if (pin) {
+      setRoomSecretMode(room, true);
+      room.unlockedPin = pin;
+      updateSecretChatUI(room);
+      window.E2EE.unlockRoom(roomKey(room), pin).then(() => {
+        updateSecretChatUI(room);
+        renderMessages(room);
+        updateRoomControls(room);
+      });
+    }
+    return;
+  }
+  if (window.E2EE?.isNormalSyncMessage?.(event.text)) {
+    setRoomSecretMode(room, false);
+    updateSecretChatUI(room);
+    return;
+  }
   const added = mergeMessages(room, [event]);
   if (added && event.from !== currentName && activeRoomId !== event.group_id) {
     room.unread += 1;

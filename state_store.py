@@ -18,11 +18,19 @@ class ChatStateStore:
         self.data = {"schema_version": 1, "groups": {}, "private_rooms": {}, "messages": [], "group_messages": []}
         if self.path.exists():
             try:
-                data = json.loads(self.path.read_text(encoding="utf-8"))
-                # ไฟล์ก่อน Step 6 ยังไม่มีข้อความกลุ่ม ให้เติมเฉพาะช่องใหม่โดยเก็บข้อมูลเดิม
-                if isinstance(data, dict):
-                    data.setdefault("group_messages", [])
-                self.validate(data)
+                raw = self.path.read_text(encoding="utf-8").strip()
+                if not raw or raw == "{}":
+                    data = {"schema_version": 1, "groups": {}, "private_rooms": {}, "messages": [], "group_messages": []}
+                else:
+                    data = json.loads(raw)
+                    # ไฟล์ก่อน Step 6 ยังไม่มีข้อความกลุ่ม ให้เติมเฉพาะช่องใหม่โดยเก็บข้อมูลเดิม
+                    if isinstance(data, dict):
+                        data.setdefault("schema_version", 1)
+                        data.setdefault("groups", {})
+                        data.setdefault("private_rooms", {})
+                        data.setdefault("messages", [])
+                        data.setdefault("group_messages", [])
+                    self.validate(data)
             except (ValueError, KeyError, TypeError) as error:
                 raise ValueError(f"Invalid chat state in {self.path}: {error}") from error
             self.data = data
@@ -124,8 +132,21 @@ class ChatStateStore:
     def groups_snapshot(self):
         with self.lock:
             # อ่านเลขรุ่นกับรายการพร้อมกัน เพื่อไม่ให้เลขรุ่นใหม่ติดไปกับข้อมูลเก่า
+            groups = []
+            for group in self.data["groups"].values():
+                item = deepcopy(group)
+                if item.get("is_secret") is None:
+                    has_secret = any(msg["group_id"] == group["group_id"] and (msg["text"].startswith("🔒 pin:sync:") or msg["text"].startswith("🔒 enc:v1:")) for msg in self.data["group_messages"])
+                    has_normal = any(msg["group_id"] == group["group_id"] and msg["text"].startswith("💬 mode:normal") for msg in self.data["group_messages"])
+                    if has_secret:
+                        item["is_secret"] = True
+                        group["is_secret"] = True
+                    elif has_normal:
+                        item["is_secret"] = False
+                        group["is_secret"] = False
+                groups.append(item)
             return {"type": "groups_updated", "version": self.groups_version,
-                    "groups": deepcopy(list(self.data["groups"].values()))}
+                    "groups": groups}
 
     def create_group(self, name, creator):
         if not isinstance(name, str) or not name.strip():
@@ -157,6 +178,11 @@ class ChatStateStore:
                 return deepcopy(group)
             data = deepcopy(self.data)
             data["groups"][group_id]["members"].append(name)
+            # Sync ข้อความประเภท sync/mode ให้กับสมาชิกใหม่ที่เพิ่งเข้ากลุ่มด้วย
+            for msg in data["group_messages"]:
+                if msg["group_id"] == group_id and (msg["text"].startswith("🔒 pin:sync:") or msg["text"].startswith("💬 mode:normal")):
+                    if name not in msg["visible_to"]:
+                        msg["visible_to"].append(name)
             self.save(data)
             self.groups_version += 1
             return deepcopy(data["groups"][group_id])
@@ -194,13 +220,30 @@ class ChatStateStore:
             group = self.group_for_member(group_id, name)
             history = [self.public_group_message(item) for item in self.data["group_messages"]
                        if item["group_id"] == group_id and name in item["visible_to"]]
-            return {**deepcopy(group), "messages": history}
+            result = {**deepcopy(group), "messages": history}
+            if result.get("is_secret") is None:
+                has_secret = any(msg["group_id"] == group_id and (msg["text"].startswith("🔒 pin:sync:") or msg["text"].startswith("🔒 enc:v1:")) for msg in self.data["group_messages"])
+                has_normal = any(msg["group_id"] == group_id and msg["text"].startswith("💬 mode:normal") for msg in self.data["group_messages"])
+                if has_secret:
+                    result["is_secret"] = True
+                    group["is_secret"] = True
+                elif has_normal:
+                    result["is_secret"] = False
+                    group["is_secret"] = False
+            return result
 
     def append_group_message(self, group_id, sender, text):
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Message must not be empty.")
         with self.lock:
             group = self.group_for_member(group_id, sender)
+            data = deepcopy(self.data)
+            if text.startswith("🔒 pin:sync:") or text.startswith("🔒 enc:v1:"):
+                data["groups"][group_id]["is_secret"] = True
+                group["is_secret"] = True
+            elif text.startswith("💬 mode:normal"):
+                data["groups"][group_id]["is_secret"] = False
+                group["is_secret"] = False
             sequence = sum(item["group_id"] == group_id for item in self.data["group_messages"]) + 1
             message = {
                 "type": "group_message", "message_id": f"message_{uuid.uuid4().hex}",
@@ -209,14 +252,25 @@ class ChatStateStore:
                 # ตรึงสิทธิ์ขณะส่ง รวมสมาชิกออฟไลน์ คนที่ Join ทีหลังจะไม่ได้ประวัตินี้
                 "visible_to": list(group["members"]),
             }
-            data = deepcopy(self.data)
             data["group_messages"].append(message)
             self.save(data)
             return deepcopy(message)
 
     def list_rooms(self, name):
         with self.lock:
-            return deepcopy([room for room in self.data["private_rooms"].values() if name in room["members"]])
+            rooms = []
+            for room in self.data["private_rooms"].values():
+                if name in room["members"]:
+                    item = deepcopy(room)
+                    if item.get("is_secret") is None:
+                        has_secret = any(msg["room_id"] == room["room_id"] and (msg["text"].startswith("🔒 pin:sync:") or msg["text"].startswith("🔒 enc:v1:")) for msg in self.data["messages"])
+                        has_normal = any(msg["room_id"] == room["room_id"] and msg["text"].startswith("💬 mode:normal") for msg in self.data["messages"])
+                        if has_secret:
+                            item["is_secret"] = True
+                        elif has_normal:
+                            item["is_secret"] = False
+                    rooms.append(item)
+            return rooms
 
     def find_room(self, name, other):
         with self.lock:
@@ -224,7 +278,7 @@ class ChatStateStore:
             for room in self.data["private_rooms"].values():
                 if room["members"] == members:
                     return deepcopy(room)
-        return None
+            return None
 
     def get_or_create_room(self, name, other):
         if not isinstance(other, str) or not other.strip() or name == other:
@@ -246,7 +300,15 @@ class ChatStateStore:
             room = self.data["private_rooms"].get(room_id)
             if room is None or name not in room["members"]:
                 raise ValueError("This private room is not available to you.")
-            return deepcopy({**room, "messages": [item for item in self.data["messages"] if item["room_id"] == room_id]})
+            item = deepcopy(room)
+            if item.get("is_secret") is None:
+                has_secret = any(msg["room_id"] == room_id and (msg["text"].startswith("🔒 pin:sync:") or msg["text"].startswith("🔒 enc:v1:")) for msg in self.data["messages"])
+                has_normal = any(msg["room_id"] == room_id and msg["text"].startswith("💬 mode:normal") for msg in self.data["messages"])
+                if has_secret:
+                    item["is_secret"] = True
+                elif has_normal:
+                    item["is_secret"] = False
+            return deepcopy({**item, "messages": [item_msg for item_msg in self.data["messages"] if item_msg["room_id"] == room_id]})
 
     def append_message(self, room_id, sender, text):
         if not isinstance(text, str) or not text.strip():
@@ -263,6 +325,15 @@ class ChatStateStore:
                 "text": text, "timestamp": datetime.now(timezone.utc).isoformat(),
             }
             data = deepcopy(self.data)
+            if text.startswith("🔒 pin:sync:") or text.startswith("🔒 enc:v1:"):
+                data["private_rooms"][room_id]["is_secret"] = True
+                room["is_secret"] = True
+            elif text.startswith("💬 mode:normal"):
+                data["private_rooms"][room_id]["is_secret"] = False
+                room["is_secret"] = False
+            data["messages"].append(message)
+            self.save(data)
+            return deepcopy(message)
             data["messages"].append(message)
             self.save(data)
             return deepcopy(message)

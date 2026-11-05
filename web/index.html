@@ -7,6 +7,34 @@
     <title>Socket Chat</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2339475e'/%3E%3Cpath d='M17 17h30v23H29l-12 9z' fill='none' stroke='%23e6edf7' stroke-width='4' stroke-linejoin='round'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="/assets/styles.css">
+    <style>
+      [hidden] {
+        display: none !important;
+      }
+      #pin-modal:not([hidden]),
+      #secret-choice-modal:not([hidden]),
+      [data-secret-prompt]:not([hidden]) {
+        display: flex !important;
+      }
+      [data-secret-badge]:not([hidden]) {
+        display: inline-flex !important;
+      }
+      @keyframes pinShake {
+        0%, 100% { transform: translateX(0); }
+        20%, 60% { transform: translateX(-10px); }
+        40%, 80% { transform: translateX(10px); }
+      }
+      .shake-anim {
+        animation: pinShake 0.35s ease-in-out;
+      }
+      .pin-dot-filled {
+        background-color: #ffffff !important;
+        border-color: #ffffff !important;
+        box-shadow: 0 0 10px rgba(255, 255, 255, 0.7);
+        transform: scale(1.2);
+      }
+    </style>
+    <script src="/feature/E2EE/e2ee.js" defer></script>
     <script src="/app.js" defer></script>
   </head>
   <body class="min-h-full bg-page p-3 font-sans text-slate-100 antialiased sm:p-6 lg:p-8">
@@ -81,7 +109,7 @@
           </div>
         </aside>
 
-        <section class="flex min-h-105 min-w-0 flex-col md:min-h-0" aria-label="Chat workspace">
+        <section class="relative flex min-h-105 min-w-0 flex-col overflow-hidden md:min-h-0" aria-label="Chat workspace">
           <nav id="room-tabs" role="tablist" class="flex min-h-18 shrink-0 items-center gap-2 overflow-x-auto border-b border-line px-5 sm:px-6" aria-label="Conversations">
             <button id="overview-tab" type="button" role="tab" aria-selected="true" aria-controls="overview-panel" class="shrink-0 rounded-lg bg-accent/80 px-4 py-2.5 text-sm font-medium focus-visible:outline-2 focus-visible:outline-slate-300">Overview</button>
           </nav>
@@ -96,6 +124,72 @@
               <p id="room-hint" class="max-w-80 text-sm leading-6 text-soft">Connect to your server to see who is online.</p>
             </div>
           </div>
+          </div>
+
+          <!-- Passcode Overlay centered strictly inside Chat Workspace -->
+          <div id="pin-modal" hidden class="absolute inset-0 z-30 flex flex-col items-center justify-center bg-slate-950/35 p-4 backdrop-blur-[1.5px]">
+            <div class="relative my-auto flex w-76 max-h-[96%] flex-col items-center overflow-y-auto rounded-3xl border border-white/10 bg-slate-900/95 p-5 shadow-2xl backdrop-blur-xl [scrollbar-width:none]">
+              <!-- Close / Hide Button (Top-Right) -->
+              <button type="button" id="pin-close-btn" class="absolute top-3.5 right-3.5 flex size-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-white/10 hover:text-white" title="ซ่อน PIN">
+                <svg viewBox="0 0 24 24" class="size-4.5" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" stroke-linecap="round"/></svg>
+              </button>
+
+              <div class="mb-2 flex size-12 items-center justify-center rounded-full bg-white/10 text-xl text-amber-400">
+                🔒
+              </div>
+              <h2 id="pin-title" class="text-base font-semibold tracking-wide">Enter Passcode</h2>
+              <p id="pin-description" class="mt-0.5 text-xs text-slate-400">Enter 4-digit PIN to decrypt chat</p>
+              
+              <!-- 4 Dots Indicators (iPhone style) -->
+              <div id="pin-dots" class="my-5 flex items-center justify-center gap-4 transition-transform">
+                <span class="pin-dot size-3.5 rounded-full border-2 border-white/40 transition-all"></span>
+                <span class="pin-dot size-3.5 rounded-full border-2 border-white/40 transition-all"></span>
+                <span class="pin-dot size-3.5 rounded-full border-2 border-white/40 transition-all"></span>
+                <span class="pin-dot size-3.5 rounded-full border-2 border-white/40 transition-all"></span>
+              </div>
+              
+              <p id="pin-error" role="alert" hidden class="mb-3 text-center text-xs text-rose-400"></p>
+
+              <!-- 3x4 Number Keypad (iPhone style) -->
+              <div class="grid grid-cols-3 gap-3.5">
+                <button type="button" class="pin-btn size-14 rounded-full border border-white/10 bg-white/10 text-xl font-light transition active:scale-90 active:bg-white/30 hover:bg-white/15" data-val="1">1</button>
+                <button type="button" class="pin-btn size-14 rounded-full border border-white/10 bg-white/10 text-xl font-light transition active:scale-90 active:bg-white/30 hover:bg-white/15" data-val="2">2</button>
+                <button type="button" class="pin-btn size-14 rounded-full border border-white/10 bg-white/10 text-xl font-light transition active:scale-90 active:bg-white/30 hover:bg-white/15" data-val="3">3</button>
+                
+                <button type="button" class="pin-btn size-14 rounded-full border border-white/10 bg-white/10 text-xl font-light transition active:scale-90 active:bg-white/30 hover:bg-white/15" data-val="4">4</button>
+                <button type="button" class="pin-btn size-14 rounded-full border border-white/10 bg-white/10 text-xl font-light transition active:scale-90 active:bg-white/30 hover:bg-white/15" data-val="5">5</button>
+                <button type="button" class="pin-btn size-14 rounded-full border border-white/10 bg-white/10 text-xl font-light transition active:scale-90 active:bg-white/30 hover:bg-white/15" data-val="6">6</button>
+                
+                <button type="button" class="pin-btn size-14 rounded-full border border-white/10 bg-white/10 text-xl font-light transition active:scale-90 active:bg-white/30 hover:bg-white/15" data-val="7">7</button>
+                <button type="button" class="pin-btn size-14 rounded-full border border-white/10 bg-white/10 text-xl font-light transition active:scale-90 active:bg-white/30 hover:bg-white/15" data-val="8">8</button>
+                <button type="button" class="pin-btn size-14 rounded-full border border-white/10 bg-white/10 text-xl font-light transition active:scale-90 active:bg-white/30 hover:bg-white/15" data-val="9">9</button>
+                
+                <button type="button" id="pin-cancel-btn" class="flex size-14 items-center justify-center text-xs font-medium text-slate-300 transition hover:text-white">ซ่อน PIN</button>
+                <button type="button" class="pin-btn size-14 rounded-full border border-white/10 bg-white/10 text-xl font-light transition active:scale-90 active:bg-white/30 hover:bg-white/15" data-val="0">0</button>
+                <button type="button" id="pin-delete-btn" class="flex size-14 items-center justify-center text-lg text-slate-400 transition active:scale-90 hover:text-white">⌫</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Secret Chat Choice Modal -->
+          <div id="secret-choice-modal" hidden class="absolute inset-0 z-30 flex items-center justify-center bg-slate-950/40 p-4 backdrop-blur-[1.5px]">
+            <div class="relative w-full max-w-sm rounded-2xl border border-line bg-sidebar p-5 shadow-2xl">
+              <div class="mb-3 flex size-11 items-center justify-center rounded-xl border border-line bg-panel text-xl">
+                🔒
+              </div>
+              <h3 class="text-base font-semibold text-white">เริ่มการสนทนาเป็น Secret Chat ไหม?</h3>
+              <p class="mt-1 text-xs leading-5 text-soft">
+                หากเลือกใช่ ข้อความจะถูกเข้ารหัสด้วย PIN และจำเป็นต้องใส่ PIN เพื่ออ่านข้อความ หากไม่ใช่ ข้อความจะถูกส่งคุยตามปกติ
+              </p>
+              <div class="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button type="button" id="choice-secret-no" class="flex items-center justify-center gap-1.5 rounded-lg border border-line bg-panel px-4 py-2 text-xs text-soft transition hover:bg-white/5 hover:text-white">
+                  <span>💬 ไม่ใช่, คุยปกติ</span>
+                </button>
+                <button type="button" id="choice-secret-yes" class="flex items-center justify-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/20 px-4 py-2 text-xs font-medium text-emerald-300 transition hover:bg-emerald-500/30">
+                  <span>🔒 ใช่, ตั้ง PIN</span>
+                </button>
+              </div>
+            </div>
           </div>
         </section>
       </div>
@@ -116,7 +210,10 @@
       <section role="tabpanel" hidden class="flex min-h-0 flex-1 flex-col">
         <header class="flex shrink-0 items-center justify-between gap-3 border-b border-line/60 px-5 py-4 sm:px-6">
           <div class="min-w-0">
-            <h2 data-peer class="truncate text-base font-semibold"></h2>
+            <div class="flex items-center gap-2.5">
+              <h2 data-peer class="truncate text-base font-semibold"></h2>
+              <span data-secret-badge hidden class="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-300">🔒 Secret Chat</span>
+            </div>
             <p class="mt-1 text-xs text-soft">Private conversation</p>
           </div>
           <div class="flex shrink-0 items-center gap-3">
@@ -130,6 +227,21 @@
           <div data-messages class="flex flex-col gap-4"></div>
         </div>
         <div class="shrink-0 border-t border-line/60 px-5 py-4 sm:px-6">
+          <!-- Secret Chat Choice Prompt Banner -->
+          <div data-secret-prompt hidden class="mb-3 flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-line bg-sidebar/80 p-3">
+            <div class="flex items-center gap-2.5">
+              <span class="text-lg">🔒</span>
+              <div>
+                <p class="text-xs font-medium text-slate-200">เริ่มการสนทนาเป็น Secret Chat ไหม?</p>
+                <p class="text-[11px] text-soft">ข้อความจะถูกเข้ารหัสด้วย PIN และต้องใช้ PIN ในการถอดรหัส</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <button data-secret-yes type="button" class="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-medium text-emerald-300 transition hover:bg-emerald-500/25">ใช่, ตั้ง PIN</button>
+              <button data-secret-no type="button" class="rounded-lg border border-line bg-panel px-3 py-1.5 text-xs text-soft transition hover:bg-white/5 hover:text-white">ไม่ใช่, คุยปกติ</button>
+            </div>
+          </div>
+
           <p data-error role="alert" hidden class="mb-3 break-words text-sm text-rose-300"></p>
           <div data-failed hidden class="mb-3 rounded-lg border border-rose-400/25 bg-rose-400/5 p-3">
             <p data-failed-text class="mb-2 whitespace-pre-wrap break-words text-sm text-soft"></p>
@@ -152,11 +264,14 @@
       <section role="tabpanel" hidden class="flex min-h-0 flex-1 flex-col">
         <header class="shrink-0 border-b border-line/60 px-5 py-3 sm:px-6">
           <div class="mb-1 flex items-center justify-between gap-3">
-            <h2 data-group-name class="min-w-0 truncate text-base font-semibold"></h2>
-            <div class="flex shrink-0 items-center gap-3">
+            <div class="min-w-0 flex items-center gap-2.5">
+              <h2 data-group-name class="truncate text-base font-semibold"></h2>
+              <span data-secret-badge hidden class="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-300">🔒 Secret Chat</span>
+            </div>
+            <div class="flex shrink-0 items-center gap-2">
               <span data-presence class="text-xs text-emerald-300"></span>
-              <button data-summarize type="button" disabled class="rounded-lg border border-line bg-accent/30 px-3 py-2 text-xs font-medium transition hover:bg-accent focus-visible:outline-2 focus-visible:outline-slate-300 disabled:cursor-not-allowed disabled:opacity-40">Summarize</button>
-              <button data-leave type="button" class="rounded-lg border border-rose-300/25 px-3 py-2 text-xs text-rose-200 transition hover:bg-rose-400/10 focus-visible:outline-2 focus-visible:outline-rose-200 disabled:cursor-not-allowed disabled:opacity-40">Leave group</button>
+              <button data-summarize type="button" disabled class="rounded-lg border border-line bg-accent/30 px-3 py-1.5 text-xs font-medium transition hover:bg-accent focus-visible:outline-2 focus-visible:outline-slate-300 disabled:cursor-not-allowed disabled:opacity-40">Summarize</button>
+              <button data-leave type="button" class="rounded-lg border border-rose-300/25 px-3 py-1.5 text-xs text-rose-200 transition hover:bg-rose-400/10 focus-visible:outline-2 focus-visible:outline-rose-200 disabled:cursor-not-allowed disabled:opacity-40">Leave group</button>
             </div>
           </div>
           <p class="text-xs leading-5 text-soft">Group conversation</p>
@@ -168,6 +283,21 @@
           <div data-messages class="flex flex-col gap-4"></div>
         </div>
         <div class="shrink-0 border-t border-line/60 px-5 py-4 sm:px-6">
+          <!-- Secret Chat Choice Prompt Banner -->
+          <div data-secret-prompt hidden class="mb-3 flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-line bg-sidebar/80 p-3">
+            <div class="flex items-center gap-2.5">
+              <span class="text-lg">🔒</span>
+              <div>
+                <p class="text-xs font-medium text-slate-200">เริ่มการสนทนาเป็น Secret Chat ไหม?</p>
+                <p class="text-[11px] text-soft">ข้อความจะถูกเข้ารหัสด้วย PIN และต้องใช้ PIN ในการถอดรหัส</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <button data-secret-yes type="button" class="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-medium text-emerald-300 transition hover:bg-emerald-500/25">ใช่, ตั้ง PIN</button>
+              <button data-secret-no type="button" class="rounded-lg border border-line bg-panel px-3 py-1.5 text-xs text-soft transition hover:bg-white/5 hover:text-white">ไม่ใช่, คุยปกติ</button>
+            </div>
+          </div>
+
           <p data-error role="alert" hidden class="mb-3 break-words text-sm text-rose-300"></p>
           <div data-failed hidden class="mb-3 rounded-lg border border-rose-400/25 bg-rose-400/5 p-3">
             <p data-failed-text class="mb-2 whitespace-pre-wrap break-words text-sm text-soft"></p>
