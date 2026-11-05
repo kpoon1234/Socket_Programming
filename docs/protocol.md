@@ -268,6 +268,39 @@ Server ตรวจสมาชิก ข้อความที่ไม่ว
 - เมื่อ persisted เป็น true หน้าเว็บไม่เสนอนำข้อความมาส่งซ้ำ หากการเชื่อมต่อขาดกลางทาง ให้เปิดประวัติตรวจหลังกลับมาก่อนส่งใหม่ ไม่มี resend อัตโนมัติ
 - แต่ละห้องมีประวัติ ร่างข้อความ สถานะส่ง และตัวนับข้อความใหม่ของตัวเอง ใช้ Socket เดิม ไม่สร้าง Socket/thread ต่อกลุ่ม
 
+## AI summary
+
+ใช้ WebSocket และ TCP Socket เดิม ไม่สร้างการเชื่อมต่อแชตใหม่ โดย Browser ส่งเพียงชนิดห้อง รหัสห้อง และ request_id:
+
+```json
+{"type": "summarize_room", "room_type": "group", "room_id": "group_example", "request_id": "summary-1"}
+```
+
+- `room_type` เป็น `private` หรือ `group` สำหรับกลุ่มใช้ group_id เป็นค่าในฟิลด์ `room_id` ของคำขอนี้
+- ต้องลงชื่อก่อนและมี request_id ที่ไม่ว่าง Server ไม่ใช้ `from`, `messages` หรือ API key ที่ Client แนบมา
+- Server ตรวจสิทธิ์ห้องส่วนตัวหรือสมาชิกปัจจุบันของกลุ่ม และเลือกประวัติจาก snapshot ของตัวเอง กลุ่มกรอง `visible_to` ตามผู้ขอ
+- เลือกช่วงท้ายไม่เกิน 30 ข้อความและ JSON input ไม่เกิน 6,000 UTF-8 bytes โดยไม่ตัดกลางข้อความหรือข้ามช่วง ถ้าไม่มีข้อความที่ไม่ว่างหรือข้อความล่าสุดใหญ่เกินเพดาน ไม่เรียก API
+- เรียก AI ใน worker สูงสุด 2 งานทั้ง Server และ 1 งานต่อการเชื่อมต่อ เมื่อเต็มตอบ error ทันที ไม่มีคิวรอสะสม และไม่ถือ state/room lock ระหว่างรอ Groq
+
+ผลสำเร็จส่งเฉพาะ Socket ของผู้ขอ พร้อม request_id และห้องต้นทาง:
+
+```json
+{"type": "room_summary", "room_type": "group", "room_id": "group_example", "request_id": "summary-1", "summary": "ประเด็นสำคัญ...", "message_count": 12, "first_message_id": "message_first", "last_message_id": "message_last", "input_bytes": 2800, "truncated": false}
+```
+
+- `message_count` และ ID แรก/สุดท้ายอ้างถึงข้อความที่ส่งสรุปจริง ไม่รวมข้อความใหม่หลัง snapshot ส่วน `truncated` บอกว่ามีข้อความใน snapshot ที่ไม่ถูกนำไปสรุป
+- ก่อนส่งผล Server ตรวจสิทธิ์และการเชื่อมต่อเดิมซ้ำภายใต้ room lock หาก Leave กลุ่มระหว่างรอ จะคืน access_changed แทนผล แม้ Join กลับแล้ว หาก Disconnect ไม่ส่งผลไปยัง Socket ใหม่ที่ใช้ชื่อเดิม
+- ไม่มีการ broadcast หรือบันทึกผลลงประวัติ Browser จับ request_id แล้วแสดงผลในพื้นที่ AI summary ของห้องต้นทาง ไม่บังคับเปลี่ยนแท็บ และใช้ textContent โดยไม่ประมวลผล HTML จาก AI
+- Browser เก็บผลเฉพาะการเชื่อมต่อปัจจุบัน ล้างผลกลุ่มเมื่อ Leave และล้างทั้งหมดเมื่อ Disconnect
+
+ข้อผิดพลาดใช้ type เดิม `error` พร้อม code และข้อมูลคำขอ เช่น:
+
+```json
+{"type": "error", "room_type": "group", "room_id": "group_example", "request_id": "summary-1", "code": "rate_limited", "text": "The AI quota is full. Please try again later."}
+```
+
+code หลัก ได้แก่ `invalid_summary_request`, `no_messages`, `input_too_large`, `summary_pending`, `summary_busy`, `missing_api_key`, `authentication_error`, `permission_denied`, `rate_limited`, `timeout`, `connection_error`, `provider_error`, `empty_summary`, `incomplete_summary`, `access_changed`, `configuration_error` และ `summary_failed` การสรุปล้มเหลวไม่ตัดการเชื่อมต่อแชตและไม่มี retry อัตโนมัติ ดู flow เพิ่มที่ [flow/summarize.md](../flow/summarize.md)
+
 ## ข้อมูลถาวร
 
 ใช้ `state_store.py` เก็บห้อง ประวัติส่วนตัว กลุ่ม และข้อความกลุ่มจริงใน `output/chat_state.json` รูปแบบตั้งต้นคือ:

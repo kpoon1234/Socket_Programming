@@ -7,6 +7,8 @@ import threading
 
 from protocol import receive_messages, send_message
 from state_store import ChatStateStore
+from feature.summarize.ai_summarize import SummaryError
+from feature.summarize.service import summarize_messages
 
 HOST = "127.0.0.1"
 PORT = 5000
@@ -21,6 +23,10 @@ server_stopping = threading.Event()
 chat_state = None
 room_locks = {}
 room_locks_lock = threading.Lock()
+# มีช่องเรียก AI พร้อมกัน 2 ช่อง ใช้ครบแล้วปฏิเสธคำขอใหม่ทันที
+summary_slots = threading.BoundedSemaphore(2)
+# ป้องกันหลาย thread ตรวจ/แก้สถานะงานสรุปพร้อมกัน
+summary_lock = threading.Lock()
 
 
 class ClientConnection:
@@ -38,6 +44,8 @@ class ClientConnection:
         self.last_groups_version = -1
         self.announced_rooms = set()
         self.announced_groups = set()
+        self.summary_pending = False  # การเชื่อมต่อนี้กำลังรอ AI อยู่หรือไม่
+        self.summary_epochs = {}  # เลขรุ่นต่อกลุ่ม เพิ่มเมื่อ Leave เพื่อยกเลิกผลคำขอเก่า
 
     def send(self, message):
         with self.send_lock:
@@ -89,6 +97,9 @@ class ClientConnection:
             self.announced_groups.add(group["group_id"])
 
     def send_group_left(self, result, request_id):
+        # แม้ Join กลับ ต้องไม่รับผล AI จากคำขอก่อนออก
+        group_id = result["group_id"]
+        self.summary_epochs[group_id] = self.summary_epochs.get(group_id, 0) + 1
         with self.send_lock:
             # เมื่อ Join กลับ ต้องประกาศห้องพร้อมประวัติที่มีสิทธิ์ใหม่อีกครั้ง
             self.announced_groups.discard(result["group_id"])
@@ -388,6 +399,81 @@ def route_message(sender, message):
     print(f"Forwarded: {sender.name} -> {recipient_name}")
 
 
+def summary_snapshot(sender, room_type, room_id):
+    """อ่านประวัติห้องผ่าน state store ซึ่งตรวจสิทธิ์ของผู้ขอให้ด้วย."""
+    if room_type == "group":
+        return chat_state.group_snapshot(room_id, sender.name)
+    return chat_state.snapshot(room_id, sender.name)
+
+
+def summary_session_active(sender):
+    """ตรวจว่า Socket เดิมยังเป็นเจ้าของชื่อนี้ และ Server ยังไม่กำลังปิด."""
+    with clients_lock:
+        return not server_stopping.is_set() and clients.get(sender.name) is sender
+
+
+def run_summary(sender, context, messages, epoch):
+    """ทำงาน AI ใน thread เบื้องหลัง แล้วตรวจสิทธิ์ซ้ำก่อนส่งผลเฉพาะผู้ขอ."""
+    try:
+        try:
+            result = summarize_messages(messages)
+            event = {"type": "room_summary", **context, **result}
+        except SummaryError as error:
+            event = {"type": "error", **context, "code": error.code, "text": str(error)}
+        except Exception:
+            # ไม่ใส่ exception หรือประวัติแชตใน log/คำตอบ
+            event = {"type": "error", **context, "code": "summary_failed",
+                     "text": "Could not summarize this conversation. Please try again."}
+
+        # จับ room lock เฉพาะตอนส่งผล ไม่ถือ lock ใดระหว่างเรียก AI
+        with room_lock(context["room_id"]):
+            if not summary_session_active(sender):
+                return
+            try:
+                if sender.summary_epochs.get(context["room_id"], 0) != epoch:
+                    raise ValueError("Room access changed while summarizing.")
+                summary_snapshot(sender, context["room_type"], context["room_id"])
+            except ValueError:
+                event = {"type": "error", **context, "code": "access_changed",
+                         "text": "Room access changed. Request a new summary after joining."}
+            sender.send(event)
+    except OSError:
+        disconnect_client(sender)
+    finally:
+        with summary_lock:
+            sender.summary_pending = False
+            summary_slots.release()
+
+
+def summarize_room(sender, message):
+    """รับคำขอสรุป ตรวจข้อมูล/สิทธิ์ จองช่องงาน แล้วเริ่ม thread เบื้องหลัง."""
+    request_id = request_id_for(message)
+    room_type, room_id = message.get("room_type"), message.get("room_id")
+    if room_type not in ("private", "group"):
+        raise ValueError("room_type must be private or group.")
+    if not isinstance(room_id, str) or not room_id.strip():
+        raise ValueError("A non-empty room_id is required.")
+    with room_lock(room_id):
+        # ประวัติมาจาก Server เท่านั้น ไม่ใช้ messages/from ที่ Client แนบมา
+        snapshot = summary_snapshot(sender, room_type, room_id)
+        epoch = sender.summary_epochs.get(room_id, 0)
+    with summary_lock:
+        if sender.summary_pending:
+            raise SummaryError("summary_pending", "A summary is already running for this connection.")
+        if not summary_slots.acquire(blocking=False):
+            raise SummaryError("summary_busy", "The AI service is busy. Please try again shortly.")
+        sender.summary_pending = True
+    context = {"request_id": request_id, "room_type": room_type, "room_id": room_id}
+    try:
+        threading.Thread(target=run_summary, args=(sender, context, snapshot["messages"], epoch),
+                         name="chat-summary", daemon=True).start()
+    except Exception:
+        with summary_lock:
+            sender.summary_pending = False
+            summary_slots.release()
+        raise SummaryError("summary_failed", "Could not start AI summarization.") from None
+
+
 def handle_client(client, address):
     print(f"Client connected: {address}")
     try:
@@ -400,6 +486,13 @@ def handle_client(client, address):
                     client.send({"type": "error", "text": "Register a name before sending messages."})
             elif message_type == "message":
                 route_message(client, message)
+            elif message_type == "summarize_room":
+                try:
+                    summarize_room(client, message)
+                except (SummaryError, ValueError) as error:
+                    client.send({"type": "error", "request_id": message.get("request_id"),
+                                 "room_type": message.get("room_type"), "room_id": message.get("room_id"),
+                                 "code": getattr(error, "code", "invalid_summary_request"), "text": str(error)})
             elif message_type in ("create_group", "join_group", "leave_group"):
                 try:
                     if message_type == "create_group":
