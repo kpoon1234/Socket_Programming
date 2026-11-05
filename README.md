@@ -2,7 +2,9 @@
 
 โปรเจกต์แอปแชตด้วย Python 3 และ TCP Socket หน้าหลักเป็นเว็บ HTML + Tailwind CSS + JavaScript เชื่อมผ่าน Python bridge (`aiohttp`) ไปยัง TCP Server เดิม
 
-## สถานะปัจจุบัน: Part 2 ขั้นที่ 1–7
+## สถานะปัจจุบัน: Part 2 ขั้นที่ 1–7 และ AI summarization
+
+เพิ่มปุ่ม **Summarize** ในห้องส่วนตัวและห้องกลุ่มแล้ว Server เลือกข้อความล่าสุดไม่เกิน 30 ข้อความที่ผู้ขอมีสิทธิ์อ่าน ส่งไปสรุปภาษาไทยผ่าน Groq และแสดงผลเฉพาะผู้กด โดยระหว่างรอยังแชตต่อได้ ผลสรุปไม่บันทึกลงประวัติ ตั้ง `GROQ_API_KEY` และ `GROQ_MODEL` ใน `.env` บนเครื่อง Server ตาม [.env.example](.env.example) รายละเอียดอยู่ใน [feature/README.md](feature/README.md) และ flow อยู่ใน [flow/summarize.md](flow/summarize.md)
 
 หน้าเว็บเชื่อมต่อ Server ด้วยชื่อไม่ซ้ำ และแสดงรายชื่อออนไลน์ที่อัปเดตตามการเข้า ออก และหลุด รวมชื่อตัวเองด้วย แต่ละแท็บมี WebSocket, `NetworkClient`, คิว และ TCP Socket แยกกัน
 
@@ -27,7 +29,7 @@ Server เก็บห้องและประวัติส่วนตั�
 | `web/app.js` | ฟอร์ม WebSocket รายชื่อ แท็บห้อง ข้อความร่าง ประวัติ และสถานะบน Browser |
 | `web/input.css` | นำเข้า Tailwind และกำหนดสีหลัก |
 | `web/assets/styles.css` | CSS ที่สร้างด้วย build และถูกละเว้นจาก Git |
-| `requirements.txt` | dependency Python สำหรับ bridge |
+| `requirements.txt` | dependency Python สำหรับ bridge และ Groq summarization |
 | `package.json`, `package-lock.json` | dependency และคำสั่ง Tailwind ที่ติดตั้งซ้ำได้ |
 | `client_network.py` | งาน connect, receive และ send เบื้องหลัง โดยไม่เรียก widget |
 | `protocol.py` | ส่งและรับ JSON แบบหนึ่งข้อความต่อหนึ่งบรรทัด |

@@ -345,6 +345,7 @@ function removeGroupRoom(groupId) {
   for (const [requestId, request] of requests) {
     if (request.roomId === groupId && request.kind !== "leave_group") requests.delete(requestId);
   }
+  refreshSummaryControls();
   if (selected) {
     selectRoom(null);
     overviewTab.focus();
@@ -414,6 +415,10 @@ function updateRoomControls(room) {
   room.input.disabled = !available || !room.loaded || leaving;
   room.input.placeholder = !room.loaded ? "Loading conversation…" : available ? "Write a message…" : isGroup ? "You are not a member" : `${room.peer} is offline`;
   room.send.disabled = room.input.disabled || room.pending !== null || !room.input.value.trim();
+  const summaryRunning = [...requests.values()].some((request) => request.kind === "summarize");
+  const canRead = currentName !== null && (!isGroup || room.members.includes(currentName));
+  room.summarize.disabled = !canRead || !room.loaded || leaving || summaryRunning;
+  room.summarize.textContent = room.summaryPending ? "Summarizing…" : "Summarize";
   if (isGroup) {
     room.leave.disabled = !available || leaving || pendingJoins.has(room.group_id) || room.pending !== null;
     room.leave.textContent = leaving ? "Leaving…" : "Leave group";
@@ -480,6 +485,7 @@ function ensureRoom(metadata) {
 
 function initializeComposer(room) {
   const panel = room.panel;
+  const summaryPanel = document.querySelector("#summary-template").content.firstElementChild.cloneNode(true);
   Object.assign(room, {
     loaded: false, unread: 0, messages: new Map(), pending: null,
     input: panel.querySelector("[data-input]"), send: panel.querySelector("[data-send]"),
@@ -488,7 +494,12 @@ function initializeComposer(room) {
     presence: panel.querySelector("[data-presence]"), status: panel.querySelector("[data-send-status]"),
     failed: panel.querySelector("[data-failed]"), failedText: null,
     leave: panel.querySelector("[data-leave]"),
+    summarize: panel.querySelector("[data-summarize]"), summaryPending: null, summaryAfterSequence: 0,
+    summaryPanel, summaryText: summaryPanel.querySelector("[data-summary-text]"),
+    summaryStatus: summaryPanel.querySelector("[data-summary-status]"),
+    summaryError: summaryPanel.querySelector("[data-summary-error]"),
   });
+  room.summarize.addEventListener("click", () => requestSummary(room));
   room.leave?.addEventListener("click", () => requestLeave(room));
   room.input.id = `message-${roomKey(room)}`;
   panel.querySelector("[data-message-label]").htmlFor = room.input.id;
@@ -512,6 +523,64 @@ function initializeComposer(room) {
       room.input.focus();
     }
   });
+}
+
+function refreshSummaryControls() {
+  for (const room of [...rooms.values(), ...groupRooms.values()]) updateRoomControls(room);
+}
+
+function positionSummary(room) {
+  // วางสรุปหลังช่วงที่ใช้สรุป เพื่อให้ข้อความใหม่เรียงต่อด้านล่าง
+  const nextMessage = [...room.list.children].find((node) => {
+    const message = room.messages.get(node.dataset.messageId);
+    return message && message.sequence > room.summaryAfterSequence;
+  });
+  room.list.insertBefore(room.summaryPanel, nextMessage || null);
+}
+
+function requestSummary(room) {
+  updateRoomControls(room);
+  if (room.summarize.disabled) return;
+  const requestId = sendCommand({
+    type: "summarize_room", room_type: room.kind, room_id: roomKey(room),
+  }, { kind: "summarize", roomId: roomKey(room), roomType: room.kind });
+  if (requestId === null) return;
+  room.summaryPending = requestId;
+  room.summaryAfterSequence = 0;
+  for (const message of room.messages.values()) {
+    room.summaryAfterSequence = Math.max(room.summaryAfterSequence, message.sequence);
+  }
+  room.summaryPanel.hidden = false;
+  positionSummary(room);
+  room.summaryPanel.setAttribute("aria-busy", "true");
+  room.summaryText.textContent = "";
+  room.summaryStatus.textContent = "Summarizing recent messages… You can keep chatting.";
+  room.summaryError.hidden = true;
+  refreshSummaryControls();
+  room.history.scrollTop = room.history.scrollHeight;
+}
+
+function handleSummary(event) {
+  const request = requests.get(event.request_id);
+  const room = findRoom(request?.roomId);
+  if (request?.kind !== "summarize" || !room || room.summaryPending !== event.request_id
+      || event.room_id !== roomKey(room) || event.room_type !== room.kind) return;
+  requests.delete(event.request_id);
+  room.summaryPending = null;
+  room.summaryPanel.setAttribute("aria-busy", "false");
+  room.summaryText.textContent = event.summary;
+  const first = room.messages.get(event.first_message_id);
+  const last = room.messages.get(event.last_message_id);
+  if (last) room.summaryAfterSequence = last.sequence;
+  positionSummary(room);
+  const range = first && last
+    ? ` · ${new Date(first.timestamp).toLocaleString()} – ${new Date(last.timestamp).toLocaleString()}` : "";
+  room.summaryStatus.textContent = `${event.message_count} messages${range}.`
+    + (event.truncated ? " Earlier messages were not included." : "")
+    + " Messages sent after this request are not included.";
+  room.summaryError.hidden = true;
+  refreshSummaryControls();
+  if (activeRoomId === roomKey(room)) room.history.scrollTop = room.history.scrollHeight;
 }
 
 function mergeMessages(room, messages) {
@@ -548,6 +617,7 @@ function mergeMessages(room, messages) {
     fragment.append(bubble);
   }
   room.list.replaceChildren(fragment);
+  if (!room.summaryPanel.hidden) positionSummary(room);
   room.empty.hidden = room.messages.size > 0;
   if (nearBottom) room.history.scrollTop = room.history.scrollHeight;
   return true;
@@ -624,6 +694,19 @@ function handleGroupMessage(event) {
 
 function handleRequestError(event) {
   const request = requests.get(event.request_id);
+  if (request?.kind === "summarize") {
+    const room = findRoom(request.roomId);
+    requests.delete(event.request_id);
+    if (room && room.summaryPending === event.request_id) {
+      room.summaryPending = null;
+      room.summaryPanel.setAttribute("aria-busy", "false");
+      room.summaryStatus.textContent = "Summary unavailable. You can keep chatting or try again.";
+      room.summaryError.textContent = event.text;
+      room.summaryError.hidden = false;
+    }
+    refreshSummaryControls();
+    return;
+  }
   if (request?.kind === "leave_group") {
     pendingLeaves.delete(request.roomId);
     renderGroups();
@@ -736,6 +819,9 @@ function handleEvent(event) {
       break;
     case "group_message":
       handleGroupMessage(event);
+      break;
+    case "room_summary":
+      handleSummary(event);
       break;
     case "sent": {
       const request = requests.get(event.request_id);
