@@ -6,12 +6,19 @@ import threading
 import unittest
 from unittest.mock import AsyncMock, Mock
 
-from aiohttp.test_utils import TestClient, TestServer
+try:
+    import aiohttp
+except ImportError:
+    aiohttp = None
+
+if aiohttp is not None:
+    from aiohttp.test_utils import TestClient, TestServer
+    from web_bridge import BrowserSession, create_app
 
 import test_summary_socket as summary_fixture
-from web_bridge import BrowserSession, create_app
 
 
+@unittest.skipUnless(aiohttp is not None, "Install requirements.txt to test the summary bridge.")
 class SummaryBridgeCommandTests(unittest.IsolatedAsyncioTestCase):
     async def test_only_summary_identifiers_are_forwarded(self):
         session = BrowserSession(AsyncMock())
@@ -27,6 +34,7 @@ class SummaryBridgeCommandTests(unittest.IsolatedAsyncioTestCase):
         })
 
 
+@unittest.skipUnless(aiohttp is not None, "Install requirements.txt to test the summary bridge.")
 class SummaryBridgeTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.fixture = summary_fixture.SummarySocketTests()

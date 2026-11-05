@@ -354,6 +354,97 @@ def deliver_private(sender, room_id, text, request_id=None, legacy=False):
         sender.send(response)
 
 
+def unsend_private(sender, message):
+    request_id = request_id_for(message)
+    room_id = message.get("room_id")
+    message_id = message.get("message_id")
+    if not isinstance(room_id, str) or not room_id.strip():
+        raise ValueError("A non-empty room_id is required.")
+    if not isinstance(message_id, str) or not message_id.strip():
+        raise ValueError("A non-empty message_id is required.")
+
+    with room_lock(room_id):
+        updated = chat_state.unsend_private_message(room_id, sender.name, message_id)
+        other = next(name for name in [updated["from"], updated["to"]] if name != sender.name)
+        with clients_lock:
+            recipient = clients.get(other)
+
+        event = {
+            "type": "message_unsent",
+            "room_type": "private",
+            "room_id": room_id,
+            "message_id": message_id,
+            "from": sender.name,
+        }
+        if recipient is not None:
+            try:
+                recipient.send(dict(event))
+            except OSError:
+                disconnect_client(recipient)
+
+        sender_event = dict(event)
+        sender_event["request_id"] = request_id
+        sender.send(sender_event)
+        sender.send({
+            "type": "sent",
+            "action": "unsend",
+            "room_id": room_id,
+            "message_id": message_id,
+            "request_id": request_id,
+        })
+
+
+def unsend_group(sender, message):
+    request_id = request_id_for(message)
+    group_id = message.get("group_id") or message.get("room_id")
+    message_id = message.get("message_id")
+    if not isinstance(group_id, str) or not group_id.strip():
+        raise ValueError("A non-empty group_id is required.")
+    if not isinstance(message_id, str) or not message_id.strip():
+        raise ValueError("A non-empty message_id is required.")
+
+    with room_lock(group_id):
+        updated = chat_state.unsend_group_message(group_id, sender.name, message_id)
+        with clients_lock:
+            recipients = [clients[name] for name in updated["visible_to"]
+                          if name in clients and (clients[name].supports_group_messages or clients[name] is sender)]
+
+        event = {
+            "type": "message_unsent",
+            "room_type": "group",
+            "group_id": group_id,
+            "message_id": message_id,
+            "from": sender.name,
+        }
+        for recipient in recipients:
+            try:
+                recipient_event = dict(event)
+                if recipient is sender:
+                    recipient_event["request_id"] = request_id
+                recipient.send(recipient_event)
+            except OSError:
+                disconnect_client(recipient)
+
+        sender.send({
+            "type": "sent",
+            "action": "unsend",
+            "group_id": group_id,
+            "message_id": message_id,
+            "request_id": request_id,
+        })
+
+
+def handle_unsend(sender, message):
+    room_type = message.get("room_type")
+    room_id = message.get("room_id") or message.get("group_id")
+    if not isinstance(room_id, str) or not room_id.strip():
+        raise ValueError("A non-empty room_id is required.")
+    if room_type == "group" or (room_type is None and room_id.startswith("group_")):
+        unsend_group(sender, message)
+    else:
+        unsend_private(sender, message)
+
+
 def route_message(sender, message):
     recipient_name = message.get("to")
     text = message.get("text")
@@ -525,6 +616,13 @@ def handle_client(client, address):
                 except (ValueError, OSError) as error:
                     client.send({"type": "error", "request_id": message.get("request_id"),
                                  "group_id": message.get("group_id"), "text": str(error)})
+            elif message_type == "unsend_message":
+                try:
+                    handle_unsend(client, message)
+                except (ValueError, OSError) as error:
+                    client.send({"type": "error", "request_id": message.get("request_id"),
+                                 "room_id": message.get("room_id") or message.get("group_id"),
+                                 "code": "unsend_failed", "text": str(error)})
             else:
                 client.send({"type": "error", "text": "Unknown command after registration."})
     except ValueError as error:

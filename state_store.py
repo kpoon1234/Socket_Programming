@@ -334,6 +334,65 @@ class ChatStateStore:
             data["messages"].append(message)
             self.save(data)
             return deepcopy(message)
-            data["messages"].append(message)
+
+    def unsend_private_message(self, room_id, sender, message_id):
+        if not isinstance(room_id, str) or not room_id.strip():
+            raise ValueError("A non-empty room_id is required.")
+        if not isinstance(message_id, str) or not message_id.strip():
+            raise ValueError("A non-empty message_id is required.")
+        with self.lock:
+            room = self.data["private_rooms"].get(room_id)
+            if room is None or sender not in room["members"]:
+                raise ValueError("This private room is not available to you.")
+            target_msg = None
+            for msg in self.data["messages"]:
+                if msg["room_id"] == room_id and msg["message_id"] == message_id:
+                    target_msg = msg
+                    break
+            if target_msg is None:
+                raise ValueError("Message not found.")
+            if target_msg["from"] != sender:
+                raise ValueError("You can only unsend your own messages.")
+            if target_msg.get("unsent"):
+                raise ValueError("Message is already unsent.")
+            data = deepcopy(self.data)
+            updated_msg = None
+            for msg in data["messages"]:
+                if msg["room_id"] == room_id and msg["message_id"] == message_id:
+                    msg["unsent"] = True
+                    msg["unsent_at"] = datetime.now(timezone.utc).isoformat()
+                    msg["text"] = "This message was unsent"
+                    updated_msg = deepcopy(msg)
+                    break
             self.save(data)
-            return deepcopy(message)
+            return updated_msg
+
+    def unsend_group_message(self, group_id, sender, message_id):
+        if not isinstance(group_id, str) or not group_id.strip():
+            raise ValueError("A non-empty group_id is required.")
+        if not isinstance(message_id, str) or not message_id.strip():
+            raise ValueError("A non-empty message_id is required.")
+        with self.lock:
+            group = self.group_for_member(group_id, sender)
+            target_msg = None
+            for msg in self.data["group_messages"]:
+                if msg["group_id"] == group_id and msg["message_id"] == message_id:
+                    target_msg = msg
+                    break
+            if target_msg is None:
+                raise ValueError("Message not found.")
+            if target_msg["from"] != sender:
+                raise ValueError("You can only unsend your own messages.")
+            if target_msg.get("unsent"):
+                raise ValueError("Message is already unsent.")
+            data = deepcopy(self.data)
+            updated_msg = None
+            for msg in data["group_messages"]:
+                if msg["group_id"] == group_id and msg["message_id"] == message_id:
+                    msg["unsent"] = True
+                    msg["unsent_at"] = datetime.now(timezone.utc).isoformat()
+                    msg["text"] = "This message was unsent"
+                    updated_msg = deepcopy(msg)
+                    break
+            self.save(data)
+            return updated_msg

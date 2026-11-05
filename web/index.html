@@ -206,6 +206,14 @@
         <button id="leave-confirm" type="button" class="rounded-lg border border-rose-300/30 bg-rose-400/10 px-4 py-2 text-sm text-rose-200 hover:bg-rose-400/20 focus-visible:outline-2 focus-visible:outline-rose-200">Leave group</button>
       </form>
     </dialog>
+    <dialog id="unsend-dialog" aria-labelledby="unsend-title" aria-describedby="unsend-description" class="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-sm rounded-2xl border border-line bg-sidebar p-5 text-slate-100 shadow-2xl backdrop:bg-black/60">
+      <h2 id="unsend-title" class="text-base font-semibold">Unsend message?</h2>
+      <p id="unsend-description" class="mt-2 text-xs leading-5 text-soft">This message will be removed for everyone in this conversation.</p>
+      <form method="dialog" class="mt-5 flex justify-end gap-2.5">
+        <button id="unsend-cancel" type="submit" class="rounded-lg border border-line px-3 py-1.5 text-xs text-soft hover:bg-white/5 hover:text-white">Cancel</button>
+        <button id="unsend-confirm" type="button" class="rounded-lg border border-rose-300/30 bg-rose-400/10 px-3 py-1.5 text-xs font-medium text-rose-200 hover:bg-rose-400/20 focus-visible:outline-2 focus-visible:outline-rose-200">Unsend</button>
+      </form>
+    </dialog>
     <template id="private-room-template">
       <section role="tabpanel" hidden class="flex min-h-0 flex-1 flex-col">
         <header class="flex shrink-0 items-center justify-between gap-3 border-b border-line/60 px-5 py-4 sm:px-6">

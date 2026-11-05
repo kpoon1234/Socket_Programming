@@ -301,6 +301,36 @@ Server ตรวจสมาชิก ข้อความที่ไม่ว
 
 code หลัก ได้แก่ `invalid_summary_request`, `no_messages`, `input_too_large`, `summary_pending`, `summary_busy`, `missing_api_key`, `authentication_error`, `permission_denied`, `rate_limited`, `timeout`, `connection_error`, `provider_error`, `empty_summary`, `incomplete_summary`, `access_changed`, `configuration_error` และ `summary_failed` การสรุปล้มเหลวไม่ตัดการเชื่อมต่อแชตและไม่มี retry อัตโนมัติ ดู flow เพิ่มที่ [flow/summarize.md](../flow/summarize.md)
 
+## ยกเลิกข้อความ (Unsend Message)
+
+ผู้ใช้ยกเลิกข้อความที่ตนเองส่งได้ทั้งห้องส่วนตัวและกลุ่ม โดยส่งคำสั่ง:
+
+```json
+{"type": "unsend_message", "room_type": "private", "room_id": "private_example", "message_id": "message_example", "request_id": "unsend-1"}
+```
+
+สำหรับกลุ่ม:
+
+```json
+{"type": "unsend_message", "room_type": "group", "group_id": "group_example", "message_id": "message_example", "request_id": "unsend-2"}
+```
+
+- Server ตรวจสอบว่าผู้ขอเป็นเจ้าของข้อความจริง (`from == sender.name`) หากไม่ใช่ตอบกลับด้วย `error`
+- เมื่อตรวจสอบผ่าน Server ปรับสถานะข้อความเป็น `unsent: true` และล้างข้อความต้นฉบับ บันทึกลง `chat_state.json` ทันที
+- กระจายเหตุการณ์ `message_unsent` ให้ทั้งผู้ส่งและผู้รับ/สมาชิกกลุ่มแบบสด:
+
+```json
+{"type": "message_unsent", "room_type": "private", "room_id": "private_example", "message_id": "message_example", "from": "alice", "request_id": "unsend-1"}
+```
+
+- ผู้ส่งได้รับ `sent` ยืนยันการยกเลิก:
+
+```json
+{"type": "sent", "action": "unsend", "room_id": "private_example", "message_id": "message_example", "request_id": "unsend-1"}
+```
+
+- ข้อความที่ถูกยกเลิกแล้วจะไม่ถูกส่งไปยังโมเดล AI ในฟีเจอร์สรุปแชต
+
 ## ข้อมูลถาวร
 
 ใช้ `state_store.py` เก็บห้อง ประวัติส่วนตัว กลุ่ม และข้อความกลุ่มจริงใน `output/chat_state.json` รูปแบบตั้งต้นคือ:
