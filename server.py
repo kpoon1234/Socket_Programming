@@ -10,7 +10,7 @@ from state_store import ChatStateStore
 from feature.summarize.ai_summarize import SummaryError
 from feature.summarize.service import summarize_messages
 
-HOST = "127.0.0.1"
+HOST = "0.0.0.0"
 PORT = 5000
 STATE_PATH = Path(os.environ.get("CHAT_STATE_PATH", Path(__file__).resolve().parent / "output" / "chat_state.json"))
 
