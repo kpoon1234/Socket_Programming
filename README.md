@@ -139,9 +139,13 @@ Join, Leave, เปิดประวัติ และส่งข้อคว
 
 เมื่อแก้ utility classes ใน `web/index.html` หรือ `web/app.js` ให้รัน `npm run build:css` ใหม่ หรือเปิด `npm run watch:css` ใน Terminal แยกเพื่อสร้าง CSS ทุกครั้งที่แก้ แล้ว refresh หน้าเว็บ Node.js ใช้ตอน build สไตล์เท่านั้น การรันแอปใช้ Browser และ Python
 
-### แผนการเปิดข้ามเครื่อง
+### การเปิดข้ามเครื่องใน LAN
 
-แต่ละเครื่อง Client รัน bridge ของตัวเองและเปิด `http://127.0.0.1:3000` ภายในเครื่อง จากนั้นกรอก IP จริงของเครื่อง TCP Server ในช่อง Server address ตัว bridge รับเฉพาะ loopback ส่วน TCP Server ต้องเปิดรับจากเครือข่ายตามแผน Part 1 (ปัจจุบัน `server.py` ยัง bind ที่ `127.0.0.1` สำหรับการทดสอบเครื่องเดียว)
+TCP Server bind ที่ `0.0.0.0:5000` เพื่อรับจากทุก IPv4 address ของเครื่อง รวมถึง loopback แต่ละเครื่อง Client รัน bridge ของตัวเองและเปิด [หน้าเว็บในเครื่อง](http://127.0.0.1:3000) จากนั้นกรอก IP ใน LAN ของเครื่อง TCP Server ในช่อง Server address และ Port `5000` หาก Client อยู่เครื่องเดียวกับ Server ยังใช้ `127.0.0.1` ได้ ส่วน `0.0.0.0` ใช้สำหรับ bind ฝั่ง Server ไม่ใช่ปลายทางที่ให้ Client กรอก
+
+ตัว bridge ยังรับเฉพาะ loopback หากเชื่อมข้ามเครื่องไม่ได้ให้ตรวจว่าอยู่ในเครือข่ายที่ติดต่อกันได้และ Firewall ของเครื่อง Server อนุญาต TCP พอร์ต `5000` ปัจจุบัน Client ยังต้องกรอก IP เอง ไม่มี discovery อัตโนมัติ
+
+แผนเพิ่มปุ่ม Find servers เพื่อค้นหา IP/Port ใน LAN อยู่ใน [flow/discovery.md](flow/discovery.md) ขณะนี้เป็นแผน ยังไม่ได้เขียน discovery
 
 ```text
 Browser A <-> local bridge A <-> TCP socket A <-> TCP Server
