@@ -28,6 +28,9 @@ const groupSubmit = document.querySelector("#group-submit");
 const groupCancel = document.querySelector("#group-cancel");
 const groupError = document.querySelector("#group-error");
 const leaveDialog = document.querySelector("#leave-dialog");
+const unsendDialog = document.querySelector("#unsend-dialog");
+const unsendConfirm = document.querySelector("#unsend-confirm");
+let unsendTarget = null;
 
 let socket = null;
 let currentName = null;
@@ -67,6 +70,8 @@ function setBusy(busy) {
 function clearSession() {
   leaveDialog.close();
   leaveTargetId = null;
+  unsendDialog?.close();
+  unsendTarget = null;
   currentName = null;
   lastUsersVersion = -1;
   lastGroupsVersion = -1;
@@ -810,11 +815,14 @@ async function renderMessages(room) {
 
   for (const message of [...room.messages.values()].sort((a, b) => a.sequence - b.sequence)) {
     const own = message.from === currentName;
-    const isEnc = window.E2EE?.isEncrypted(message.text);
+    const isUnsent = Boolean(message.unsent || message.text === "This message was unsent");
+    const isEnc = !isUnsent && window.E2EE?.isEncrypted(message.text);
     let displayText = message.text;
     let isLocked = false;
 
-    if (isEnc) {
+    if (isUnsent) {
+      displayText = own ? "You unsent a message" : `${message.from} unsent a message`;
+    } else if (isEnc) {
       if (window.E2EE) {
         const decResult = await window.E2EE.decrypt(rKey, message.text);
         if (decResult.success) {
@@ -830,9 +838,15 @@ async function renderMessages(room) {
 
     const bubble = document.createElement("article");
     bubble.dataset.messageId = message.message_id;
-    bubble.className = own
-      ? "max-w-[88%] self-end rounded-2xl rounded-br-sm bg-accent px-4 py-3 sm:max-w-[75%]"
-      : "max-w-[88%] self-start rounded-2xl rounded-bl-sm bg-sidebar px-4 py-3 sm:max-w-[75%]";
+    if (isUnsent) {
+      bubble.className = own
+        ? "max-w-[88%] self-end rounded-2xl rounded-br-sm border border-dashed border-line/60 bg-accent/20 px-4 py-2.5 sm:max-w-[75%]"
+        : "max-w-[88%] self-start rounded-2xl rounded-bl-sm border border-dashed border-line/60 bg-sidebar/40 px-4 py-2.5 sm:max-w-[75%]";
+    } else {
+      bubble.className = own
+        ? "max-w-[88%] self-end rounded-2xl rounded-br-sm bg-accent px-4 py-3 sm:max-w-[75%]"
+        : "max-w-[88%] self-start rounded-2xl rounded-bl-sm bg-sidebar px-4 py-3 sm:max-w-[75%]";
+    }
 
     const caption = document.createElement("div");
     caption.className = "mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-soft";
@@ -844,12 +858,30 @@ async function renderMessages(room) {
     time.title = new Date(message.timestamp).toLocaleString();
     caption.append(author, time);
 
+    if (own && !isUnsent) {
+      const unsendBtn = document.createElement("button");
+      unsendBtn.type = "button";
+      unsendBtn.className = "ml-auto text-[11px] text-soft/60 transition hover:text-rose-300 focus-visible:outline-2 focus-visible:outline-slate-300 cursor-pointer";
+      unsendBtn.textContent = "Unsend";
+      unsendBtn.title = "Unsend this message";
+      unsendBtn.setAttribute("aria-label", "Unsend message");
+      unsendBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        promptUnsend(room, message.message_id);
+      });
+      caption.append(unsendBtn);
+    }
+
     const content = document.createElement("p");
-    content.className = "whitespace-pre-wrap break-words text-sm leading-6";
-    if (isLocked) {
-      content.className += " font-mono text-xs opacity-75 cursor-pointer select-none";
-      content.title = "Tap to enter Passcode";
-      content.onclick = () => openPinDialog(room);
+    if (isUnsent) {
+      content.className = "whitespace-pre-wrap break-words text-xs italic leading-5 text-soft/75 select-none";
+    } else {
+      content.className = "whitespace-pre-wrap break-words text-sm leading-6";
+      if (isLocked) {
+        content.className += " font-mono text-xs opacity-75 cursor-pointer select-none";
+        content.title = "Tap to enter Passcode";
+        content.onclick = () => openPinDialog(room);
+      }
     }
     content.textContent = displayText;
     bubble.append(caption, content);
@@ -870,6 +902,27 @@ async function renderMessages(room) {
   }
 }
 
+function promptUnsend(room, messageId) {
+  unsendTarget = { room, messageId };
+  if (unsendDialog) {
+    unsendDialog.showModal();
+  } else {
+    executeUnsend(room, messageId);
+    unsendTarget = null;
+  }
+}
+
+function executeUnsend(room, messageId) {
+  const isGroup = room.kind === "group";
+  const command = {
+    type: "unsend_message",
+    room_type: room.kind,
+    [isGroup ? "group_id" : "room_id"]: roomKey(room),
+    message_id: messageId,
+  };
+  sendCommand(command, { kind: "unsend", roomId: roomKey(room), messageId });
+}
+
 function mergeMessages(room, messages) {
   let added = false;
   for (const message of messages) {
@@ -883,6 +936,13 @@ function mergeMessages(room, messages) {
     if (!room.messages.has(message.message_id)) {
       room.messages.set(message.message_id, message);
       added = true;
+    } else {
+      const existing = room.messages.get(message.message_id);
+      if (message.unsent && !existing.unsent) {
+        existing.unsent = true;
+        existing.text = message.text;
+        added = true;
+      }
     }
   }
   if (!added) return false;
@@ -1351,6 +1411,8 @@ function handleRequestError(event) {
         room.panel.querySelector("[data-failed-text]").textContent = request.text;
         room.failed.hidden = false;
       }
+    } else if (request.kind === "unsend") {
+      room.status.textContent = "Could not unsend message.";
     } else if (request.kind === "open" || request.kind === "open_group") {
       room.empty.textContent = "Could not load this conversation. Select the tab to retry.";
     }
@@ -1435,15 +1497,37 @@ function handleEvent(event) {
     case "group_message":
       handleGroupMessage(event);
       break;
+    case "message_unsent": {
+      const roomId = event.room_id || event.group_id;
+      const room = findRoom(roomId);
+      if (room) {
+        if (room.messages.has(event.message_id)) {
+          const msg = room.messages.get(event.message_id);
+          msg.unsent = true;
+          msg.text = "This message was unsent";
+          renderMessages(room);
+        }
+        if (event.request_id && requests.has(event.request_id)) {
+          requests.delete(event.request_id);
+          room.status.textContent = "Message unsent.";
+          updateRoomControls(room);
+        }
+      }
+      break;
+    }
     case "room_summary":
       handleSummary(event);
       break;
     case "sent": {
       const request = requests.get(event.request_id);
-      const room = findRoom(request?.roomId);
+      const room = findRoom(request?.roomId || event.room_id || event.group_id);
       if (room) {
-        room.pending = null;
-        room.status.textContent = room.kind === "group" ? "Saved and sent to online members." : `Sent to ${room.peer}`;
+        if (event.action === "unsend") {
+          room.status.textContent = "Message unsent.";
+        } else {
+          room.pending = null;
+          room.status.textContent = room.kind === "group" ? "Saved and sent to online members." : `Sent to ${room.peer}`;
+        }
         updateRoomControls(room);
       }
       requests.delete(event.request_id);
@@ -1467,6 +1551,15 @@ function handleEvent(event) {
 createGroupButton.addEventListener("click", () => showGroupForm(groupForm.hidden));
 document.querySelector("#leave-confirm").addEventListener("click", confirmGroupLeave);
 leaveDialog.addEventListener("close", () => { leaveTargetId = null; });
+unsendConfirm?.addEventListener("click", () => {
+  if (unsendTarget) {
+    const { room, messageId } = unsendTarget;
+    executeUnsend(room, messageId);
+    unsendTarget = null;
+  }
+  unsendDialog?.close();
+});
+unsendDialog?.addEventListener("close", () => { unsendTarget = null; });
 groupCancel.addEventListener("click", () => {
   groupForm.reset();
   groupError.hidden = true;

@@ -3,17 +3,26 @@
 import os
 from pathlib import Path
 
-from dotenv import dotenv_values
-from groq import (
-    APIConnectionError,
-    APIError,
-    APIStatusError,
-    APITimeoutError,
-    AuthenticationError,
-    Groq,
-    PermissionDeniedError,
-    RateLimitError,
-)
+try:
+    from dotenv import dotenv_values
+except ImportError:
+    dotenv_values = None
+
+try:
+    from groq import (
+        APIConnectionError,
+        APIError,
+        APIStatusError,
+        APITimeoutError,
+        AuthenticationError,
+        Groq,
+        PermissionDeniedError,
+        RateLimitError,
+    )
+except ImportError:
+    APIConnectionError = APIError = APIStatusError = APITimeoutError = ()
+    AuthenticationError = PermissionDeniedError = RateLimitError = ()
+    Groq = None
 
 ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 DEFAULT_MODEL = "openai/gpt-oss-20b"
@@ -33,6 +42,8 @@ def summarize_text(system_prompt, conversation):
         raise SummaryError("no_messages", "There are no messages to summarize.")
     if not isinstance(system_prompt, str) or not system_prompt.strip():
         raise SummaryError("invalid_prompt", "A summary instruction is required.")
+    if dotenv_values is None or Groq is None:
+        raise SummaryError("configuration_error", "AI summarization libraries are not installed.")
 
     # อ่านเฉพาะ .env ของโปรเจกต์ ไม่เปลี่ยน environment ของโปรแกรม
     # environment ที่ตั้งไว้มีสิทธิ์เหนือไฟล์ และไม่ขยายตัวแปรในค่าลับ
