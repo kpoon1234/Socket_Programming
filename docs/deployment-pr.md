@@ -1,6 +1,6 @@
 # สรุป deployment สำหรับเปิด PR
 
-Branch: `codex/deployment-pr` สร้างจาก `origin/main` ที่ `9f71189` หลัง fetch
+Branch: `feature/deployment` สร้างจาก `origin/main` ที่ `9f71189` หลัง fetch
 เตรียมสำหรับ PR เข้า `main`; ยังไม่รวมงาน unsent ที่เปิด PR แยกอยู่
 
 ชื่อ PR ที่แนะนำ: `feat: add Docker deployment for chat through existing Cloudflare Tunnel`
