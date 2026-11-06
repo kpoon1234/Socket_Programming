@@ -1663,5 +1663,6 @@ fetch("/config", { cache: "no-store" })
     form.classList.toggle("md:grid-cols-[minmax(0,1fr)_auto_auto]", fixedServer);
     configReady = true;
     setBusy(false);
+    form.hidden = false;
   })
   .catch(() => setStatus("Cannot load the chat service. Reload this page to try again.", "Error"));
