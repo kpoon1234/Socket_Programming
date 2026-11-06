@@ -73,14 +73,31 @@ async def run(args):
                                  "text": state["text"], "request_id": "group"})
             assert (await event(alice, "group_message"))["text"] == state["text"]
             await event(bob, "sent")
+            for kind, target, key in (("private", state["room_id"], "room_id"),
+                                      ("group", state["group_id"], "group_id")):
+                await alice.send_json({"type": kind + "_message", key: target,
+                                       "text": "Unsend deployment smoke", "request_id": "remove"})
+                message = await event(bob, kind + "_message")
+                await event(alice, "sent")
+                state[kind + "_unsent_id"] = message["message_id"]
+                await alice.send_json({"type": "unsend_message", "room_type": kind, key: target,
+                                       "message_id": message["message_id"], "request_id": "unsend"})
+                assert (await event(alice, "message_unsent"))["message_id"] == message["message_id"]
+                assert (await event(bob, "message_unsent"))["message_id"] == message["message_id"]
+                assert (await event(alice, "sent"))["action"] == "unsend"
             args.write.write_text(json.dumps(state, ensure_ascii=False))
-            print("PASS: assets, origin rejection, fixed target, two users, private and group chat")
+            print("PASS: assets, origin rejection, fixed target, two users, private/group chat and unsend")
         else:
-            await alice.send_json({"type": "open_private", "room_id": state["room_id"], "request_id": "history"})
-            assert (await event(alice, "room_opened"))["messages"][-1]["text"] == state["text"]
-            await bob.send_json({"type": "open_group", "group_id": state["group_id"], "request_id": "group-history"})
-            assert (await event(bob, "group_opened"))["messages"][-1]["text"] == state["text"]
-            print("PASS: private history, group membership and group history survive container recreation")
+            for kind, target, key in (("private", state["room_id"], "room_id"),
+                                      ("group", state["group_id"], "group_id")):
+                await bob.send_json({"type": "open_" + kind, key: target, "request_id": "history"})
+                opened = await event(bob, "room_opened" if kind == "private" else "group_opened")
+                assert any(message["text"] == state["text"] for message in opened["messages"])
+                unsent = next(message for message in opened["messages"]
+                              if message["message_id"] == state[kind + "_unsent_id"])
+                assert unsent["unsent"] is True
+                assert unsent["text"] == "This message was unsent"
+            print("PASS: private/group history, membership and unsent state survive container recreation")
 
 
 if __name__ == "__main__":

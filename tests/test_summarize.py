@@ -9,8 +9,12 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-import httpx
-import groq
+try:
+    import httpx
+    import groq
+except ImportError:
+    httpx = None
+    groq = None
 
 from feature.summarize import ai_summarize, service
 from feature.summarize.ai_summarize import SummaryError
@@ -25,6 +29,7 @@ def message(index, text=None):
     }
 
 
+@unittest.skipUnless(httpx is not None and groq is not None, "Install requirements.txt to test summarization.")
 class SummaryServiceTests(unittest.TestCase):
     def test_latest_thirty_keep_order_and_report_the_actual_range(self):
         messages = [message(i) for i in range(35)]
@@ -120,6 +125,7 @@ class SummaryServiceTests(unittest.TestCase):
         self.assertNotIn("secret-", prepared.conversation)
 
 
+@unittest.skipUnless(httpx is not None and groq is not None, "Install requirements.txt to test summarization.")
 class AIProviderTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -191,7 +197,7 @@ class AIProviderTests(unittest.TestCase):
                     ai_summarize.summarize_text("instructions", "data")
                 except SummaryError as error:
                     self.assertEqual(error.code, code)
-                    rendered = "".join(traceback.format_exception(error))
+                    rendered = "".join(traceback.format_exception(type(error), error, error.__traceback__))
                     self.assertNotIn("sensitive-provider-body", rendered)
                     self.assertNotIn("fake-secret", rendered)
                 else:

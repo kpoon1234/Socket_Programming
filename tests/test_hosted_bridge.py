@@ -73,6 +73,38 @@ class HostedBridgeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(raised.exception.status, 403)
         await self.connect("alice")
 
+    async def test_unsend_private_and_group_messages_through_fixed_target(self):
+        alice, bob = await self.connect("alice"), await self.connect("bob")
+        await alice.send_json({"type": "open_private", "to": "bob", "request_id": "open"})
+        room_id = (await self.event(alice, "room_opened"))["room_id"]
+        await alice.send_json({"type": "create_group", "name": "Unsend", "request_id": "create"})
+        group_id = (await self.event(alice, "group_created"))["group_id"]
+        await bob.send_json({"type": "join_group", "group_id": group_id, "request_id": "join"})
+        await self.event(bob, "group_joined")
+
+        for kind, target, key in (("private", room_id, "room_id"), ("group", group_id, "group_id")):
+            with self.subTest(room_type=kind):
+                await alice.send_json({"type": kind + "_message", key: target,
+                                       "text": "Remove through hosted bridge", "request_id": "send"})
+                message = await self.event(bob, kind + "_message")
+                await self.event(alice, "sent")
+                # Bridge ต้องส่ง message_id/room_type ต่อ และให้ Server ตรวจเจ้าของข้อความจริง
+                await bob.send_json({"type": "unsend_message", "room_type": kind, key: target,
+                                     "message_id": message["message_id"], "request_id": "forged", "from": "alice"})
+                self.assertEqual((await self.event(bob, "error"))["code"], "unsend_failed")
+                await alice.send_json({"type": "unsend_message", "room_type": kind, key: target,
+                                       "message_id": message["message_id"], "request_id": "unsend"})
+                own = await self.event(alice, "message_unsent")
+                received = await self.event(bob, "message_unsent")
+                self.assertEqual(own["request_id"], "unsend")
+                self.assertEqual(received["message_id"], message["message_id"])
+                self.assertEqual(received["from"], "alice")
+                self.assertEqual((await self.event(alice, "sent"))["action"], "unsend")
+                await bob.send_json({"type": "open_" + kind, key: target, "request_id": "history"})
+                opened = await self.event(bob, "room_opened" if kind == "private" else "group_opened")
+                self.assertTrue(opened["messages"][-1]["unsent"])
+                self.assertEqual(opened["messages"][-1]["text"], "This message was unsent")
+
     async def test_config_and_secret_chat_assets_without_exposing_private_files(self):
         response = await self.client.get("/config")
         self.assertEqual(await response.json(), {"fixed_server": True})

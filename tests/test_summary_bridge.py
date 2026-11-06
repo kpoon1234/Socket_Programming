@@ -6,12 +6,27 @@ import threading
 import unittest
 from unittest.mock import AsyncMock, Mock
 
-from aiohttp.test_utils import TestClient, TestServer
+try:
+    import aiohttp
+except ImportError:
+    aiohttp = None
+
+try:
+    from asyncio import timeout as async_timeout
+except ImportError:
+    try:
+        from async_timeout import timeout as async_timeout
+    except ImportError:
+        async_timeout = None
+
+if aiohttp is not None:
+    from aiohttp.test_utils import TestClient, TestServer
+    from web_bridge import BrowserSession, create_app
 
 import test_summary_socket as summary_fixture
-from web_bridge import BrowserSession, create_app
 
 
+@unittest.skipUnless(aiohttp is not None, "Install requirements.txt to test the summary bridge.")
 class SummaryBridgeCommandTests(unittest.IsolatedAsyncioTestCase):
     async def test_only_summary_identifiers_are_forwarded(self):
         session = BrowserSession(AsyncMock())
@@ -27,6 +42,7 @@ class SummaryBridgeCommandTests(unittest.IsolatedAsyncioTestCase):
         })
 
 
+@unittest.skipUnless(aiohttp is not None, "Install requirements.txt to test the summary bridge.")
 class SummaryBridgeTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.fixture = summary_fixture.SummarySocketTests()
@@ -37,7 +53,7 @@ class SummaryBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(self.client.close)
 
     async def event(self, websocket, kind):
-        async with asyncio.timeout(5):
+        async with async_timeout(5):
             while True:
                 event = await websocket.receive_json()
                 if event["type"] == kind:
@@ -70,7 +86,7 @@ class SummaryBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(summary["summary"])[0]["text"], "hold-ai งานส่งวันศุกร์")
         await bob.send_json({"type": "message", "to": "bob", "text": "probe"})
         observed = []
-        async with asyncio.timeout(5):
+        async with async_timeout(5):
             while True:
                 event = await bob.receive_json()
                 observed.append(event["type"])

@@ -136,4 +136,5 @@ docker compose -p socket-chat-deployment-test --env-file /dev/null down
 ```
 
 `--env-file /dev/null` ไม่อ่าน `.env` แต่ environment ใน shell ยังมีผล
-smoke test ตรวจ HTTP/WebSocket และ persistence; ยังต้องลอง UI/Secret Chat บน Browser จริง
+smoke test ตรวจ HTTP/WebSocket, Unsend ส่วนตัว/กลุ่ม และ persistence หลัง recreate;
+ยังต้องลอง UI/Secret Chat บน Browser จริง

@@ -1,5 +1,7 @@
 """Prepare and summarize an oldest-first snapshot already authorized by the server."""
 
+from __future__ import annotations
+
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import json
@@ -54,7 +56,7 @@ def prepare_messages(authorized_messages):
         sender, text = message.get("from"), message.get("text")
         if not isinstance(sender, str) or not sender.strip() or not isinstance(text, str):
             raise SummaryError("invalid_messages", "The message snapshot is invalid.")
-        if not text.strip():
+        if not text.strip() or message.get("unsent"):
             continue
         timestamp = message.get("timestamp")
         message_id = message.get("message_id")

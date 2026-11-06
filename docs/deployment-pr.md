@@ -1,7 +1,7 @@
 # สรุป deployment สำหรับเปิด PR
 
 Branch: `feature/deployment` สร้างจาก `origin/main` ที่ `9f71189` หลัง fetch
-เตรียมสำหรับ PR เข้า `main`; ยังไม่รวมงาน unsent ที่เปิด PR แยกอยู่
+รวม `origin/main` ที่ `64b8aa8` ซึ่ง merge PR #9 (Unsend) แล้ว และทดสอบร่วมกับ deployment ก่อน merge PR #10
 
 ชื่อ PR ที่แนะนำ: `feat: add Docker deployment for chat through existing Cloudflare Tunnel`
 
@@ -27,9 +27,9 @@ server เก็บประวัติใน named volume และได้�
 | `web_bridge.py` | เพิ่ม fixed TCP target, `/config`, CLI bind/target/origin และตรวจ HTTPS Origin โดยไม่เชื่อ forwarded headers; defaults เดิมยังใช้ได้ |
 | `web/app.js` | อ่าน config ก่อน Connect, ซ่อน/disable host/port ใน fixed mode และส่งเพียงชื่อ; ใช้ข้อความสถานะที่เหมาะกับเว็บผ่าน Tunnel |
 | `web/index.html` | เพิ่ม ID ให้ wrapper ของ host/port เพื่อสลับฟอร์มตามโหมด |
-| `tests/test_hosted_bridge.py` | เพิ่ม 7 tests ครอบคลุม fixed target ที่ปลอมไม่ได้, private/group chat, history, HTTPS Origin, config validation, E2EE assets และโหมด local |
+| `tests/test_hosted_bridge.py` | เพิ่ม 8 tests ครอบคลุม fixed target ที่ปลอมไม่ได้, private/group chat, Unsend/สิทธิ์เจ้าของข้อความ, history, HTTPS Origin, config validation, E2EE assets และโหมด local |
 | `tests/test_web_bridge.py` | เผื่อเวลารอเฉพาะกรณี connect ไม่สำเร็จให้มากกว่า TCP timeout 5 วินาที ป้องกันเทสต์แข่งกับ timeout จริง |
-| `tests/smoke_deployment.py` | เพิ่ม smoke test สำหรับ stack ที่รันจริง ตรวจ assets/Origin, สองผู้ใช้, private/group chat และตรวจประวัติหลัง recreate |
+| `tests/smoke_deployment.py` | เพิ่ม smoke test สำหรับ stack ที่รันจริง ตรวจ assets/Origin, สองผู้ใช้, private/group chat, Unsend และตรวจประวัติ/สถานะ Unsend หลัง recreate |
 | `feature/deployment/.env.example` | เพิ่มตัวอย่างค่าติดตั้ง ไม่มี key จริง |
 | `feature/deployment/tunnel-network.example.yaml` | เพิ่มตัวอย่างเฉพาะส่วน network ที่ต้องรวมใน Stack Tunnel เดิม |
 | `feature/deployment/README.md` | เพิ่มคู่มือ localhost/Ubuntu/Tunnel, volume, backup, troubleshooting และคำสั่งทดสอบ |
@@ -41,11 +41,11 @@ server เก็บประวัติใน named volume และได้�
 
 ตรวจบน macOS ด้วย Docker Desktop/Engine `29.9.2`, Compose `v5.6.1`:
 
-- `.venv/bin/python -m unittest discover -s tests -v`: ผ่าน 116 tests
+- `.venv/bin/python -m unittest discover -s tests -v`: ผ่าน 126 tests หลังรวม Unsend จาก main
 - `npm run check:js`, `npm run build:css`, `git diff --check`: ผ่าน
 - Docker build สำเร็จ; web/server healthy; มี host binding เฉพาะ `127.0.0.1:3000` ไม่มี TCP port ของ server ออก host
-- smoke ที่ `http://localhost:3000`: assets รวม CSS/E2EE โหลดได้, Origin ต่างเว็บถูกปฏิเสธ, host/port ปลอมเปลี่ยน TCP target ไม่ได้, สองผู้ใช้ส่ง private/group chat ได้
-- `up -d --force-recreate --wait` แล้วตรวจซ้ำ: ห้องส่วนตัว สมาชิกกลุ่ม และประวัติทั้งสองแบบยังอยู่
+- smoke ที่ `http://localhost:3000`: assets รวม CSS/E2EE โหลดได้, Origin ต่างเว็บถูกปฏิเสธ, host/port ปลอมเปลี่ยน TCP target ไม่ได้, สองผู้ใช้ส่งและ Unsend private/group chat ได้
+- `up -d --force-recreate --wait` แล้วตรวจซ้ำ: ห้องส่วนตัว สมาชิกกลุ่ม ประวัติทั้งสองแบบ และสถานะ Unsend ยังอยู่
 - ตรวจ runtime: UID 10001, ไม่มี Node, ไม่มีไฟล์ `.env*`/ประวัติ local ใน `/app`; web ไม่มี Groq environment; server เขียน `/data/chat_state.json` ได้
 - ทดลอง overlay กับ external network ชั่วคราวและ client container แทนตำแหน่ง cloudflared: alias `socket-chat-web:3000` ใช้ HTTP และ WebSocket ที่ส่ง HTTPS Origin ได้; server ไม่อยู่ใน DNS ของ network Tunnel
 - public mode ปฏิเสธ Origin หาย/localhost; เปลี่ยนกลับ local mode แล้ว services healthy และเก็บ volume เดิม
@@ -55,15 +55,13 @@ server เก็บประวัติใน named volume และได้�
 ยังไม่ได้ติดตั้งบน Ubuntu จริงหรือแก้ route ใน Cloudflare บัญชีจริง และไม่ได้เรียก Groq ด้วย key จริง
 ให้ตรวจรับตามคู่มือบนเครื่องปลายทางก่อนใช้งานจริง
 
-## ลำดับ merge หลัง PR unsent ของปั้น
+## การรวม Unsend จาก PR #9
 
-1. เปิด PR deployment เพื่อให้ review ได้ แต่รอ PR unsent merge ก่อน
-2. หลัง merge แล้ว บน branch deployment ใช้ `git fetch origin` ตามด้วย `git merge origin/main`
-3. ถ้ามี conflict ให้รักษาการจัดการ unsent และ deployment config ทั้งสองส่วน โดยเฉพาะ `web/app.js`;
-   ถ้าไม่มี conflict ก็ยังต้องทดสอบพฤติกรรมร่วมกัน
-4. รัน regression tests, build CSS และ smoke ใหม่ด้วย image ที่ rebuild แล้ว
-5. ใน Browser ตรวจ name-only Connect, ส่งสำเร็จ, ส่งไม่สำเร็จ/unsent, Disconnect/Connect ใหม่,
-   ประวัติหลัง restart และ HTTPS WebSocket ก่อน push อัปเดต PR และ merge
+รับ `origin/main` หลัง PR #9 merge แล้ว พบ conflict 1 จุดใน `tests/test_web_bridge.py`
+แก้ helper เป็น `event(..., timeout=5)` ที่ใช้ `async_timeout(timeout)` เพื่อเก็บทั้ง compatibility ของปั้นและเวลารอ connection error ของ deployment
+`web/app.js`, `web/index.html` และ `web_bridge.py` รวมได้อัตโนมัติ
 
-ใช้ merge สำหรับรับ main เข้ามาได้โดยไม่ rewrite commits ของ branch ที่เปิด PR แล้ว
-ไม่ต้องแก้ conflict ล่วงหน้าก่อน unsent เข้า main
+เพิ่ม integration test ยืนยัน Unsend ทั้ง private/group ผ่าน fixed-target HTTPS-Origin bridge,
+ปฏิเสธการปลอมผู้ส่งเพื่อยกเลิกข้อความคนอื่น และอ่านประวัติที่มีสถานะ Unsend ได้
+ขยาย Docker smoke test ให้ตรวจสถานะ Unsend หลัง recreate ด้วย
+ส่วน UI บน Browser จริงและการติดตั้ง Ubuntu ยังตรวจรับตามคู่มือก่อนใช้งานจริง

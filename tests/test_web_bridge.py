@@ -10,6 +10,14 @@ try:
 except ImportError:
     aiohttp = None
 
+try:
+    from asyncio import timeout as async_timeout
+except ImportError:
+    try:
+        from async_timeout import timeout as async_timeout
+    except ImportError:
+        async_timeout = None
+
 if aiohttp is not None:
     from aiohttp.test_utils import TestClient, TestServer
     from web_bridge import create_app
@@ -28,14 +36,14 @@ class WebBridgeTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(self.client.close)
 
     async def event(self, websocket, event_type, timeout=5):
-        async with asyncio.timeout(timeout):
+        async with async_timeout(timeout):
             while True:
                 event = await websocket.receive_json()
                 if event["type"] == event_type:
                     return event
 
     async def users(self, websocket, expected):
-        async with asyncio.timeout(5):
+        async with async_timeout(5):
             while True:
                 event = await self.event(websocket, "users_updated")
                 if event["users"] == sorted(expected):
