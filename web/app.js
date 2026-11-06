@@ -45,6 +45,8 @@ let pendingGroupRequest = null;
 let currentGroups = [];
 let lastJoinRequestId = null;
 let leaveTargetId = null;
+let configReady = false;
+let fixedServer = false;
 
 function setStatus(text, state) {
   statusText.textContent = text;
@@ -63,6 +65,9 @@ function setBusy(busy) {
   for (const control of [hostInput, portInput, nameInput, connectButton]) {
     control.disabled = busy;
   }
+  hostInput.disabled = busy || fixedServer;
+  portInput.disabled = busy || fixedServer;
+  connectButton.disabled = busy || !configReady;
   disconnectButton.disabled = !busy;
   connectButton.textContent = busy ? "Connected" : "Connect";
 }
@@ -1594,12 +1599,12 @@ roomTabs.addEventListener("keydown", (event) => {
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();
-  if (socket !== null) return;
+  if (socket !== null || !configReady) return;
   const host = hostInput.value.trim();
   const name = nameInput.value.trim();
   const port = Number(portInput.value);
-  if (!host || !name || !Number.isInteger(port) || port < 1 || port > 65535) {
-    setStatus("Enter a server address, a valid port, and a name.", "Error");
+  if (!name || (!fixedServer && (!host || !Number.isInteger(port) || port < 1 || port > 65535))) {
+    setStatus(fixedServer ? "Enter your name." : "Enter a server address, a valid port, and a name.", "Error");
     return;
   }
   clearSession();
@@ -1607,19 +1612,19 @@ form.addEventListener("submit", (event) => {
   lastError = "";
   setBusy(true);
   connectButton.textContent = "Connecting…";
-  setStatus(`Connecting to ${host}:${port}…`, "Connecting");
+  setStatus(fixedServer ? "Connecting…" : `Connecting to ${host}:${port}…`, "Connecting");
   const scheme = location.protocol === "https:" ? "wss" : "ws";
   const connection = new WebSocket(`${scheme}://${location.host}/ws`);
   socket = connection;
   connection.addEventListener("open", () => {
-    connection.send(JSON.stringify({ type: "connect", host, port, name }));
+    connection.send(JSON.stringify(fixedServer ? { type: "connect", name } : { type: "connect", host, port, name }));
   });
   connection.addEventListener("message", (message) => {
     if (socket !== connection) return;
     handleEvent(JSON.parse(message.data));
   });
   connection.addEventListener("error", () => {
-    if (!intentionalDisconnect) lastError = "Cannot reach the local bridge. Check that it is running.";
+    if (!intentionalDisconnect) lastError = "Cannot reach the chat service. Please try again.";
   });
   connection.addEventListener("close", () => {
     if (socket !== connection) return;
@@ -1642,3 +1647,21 @@ disconnectButton.addEventListener("click", () => {
 });
 
 window.addEventListener("pagehide", () => socket?.close());
+
+setBusy(false);
+fetch("/config", { cache: "no-store" })
+  .then((response) => {
+    if (!response.ok) throw new Error("Could not load configuration.");
+    return response.json();
+  })
+  .then((config) => {
+    if (typeof config.fixed_server !== "boolean") throw new Error("Invalid configuration.");
+    fixedServer = config.fixed_server;
+    document.querySelector("#server-host-field").hidden = fixedServer;
+    document.querySelector("#server-port-field").hidden = fixedServer;
+    form.classList.toggle("md:grid-cols-[minmax(0,1.4fr)_6rem_minmax(0,1fr)_auto_auto]", !fixedServer);
+    form.classList.toggle("md:grid-cols-[minmax(0,1fr)_auto_auto]", fixedServer);
+    configReady = true;
+    setBusy(false);
+  })
+  .catch(() => setStatus("Cannot load the chat service. Reload this page to try again.", "Error"));

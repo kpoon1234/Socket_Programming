@@ -44,6 +44,8 @@ Server เก็บห้องและประวัติส่วนตั�
 
 ## เปิดหน้าเว็บบนเครื่องเดียว
 
+ใช้ Docker เปิดเว็บที่ `http://localhost:3000` และติดตั้งบน Ubuntu ผ่าน Cloudflare Tunnel เดิมได้ตาม [คู่มือ deployment](feature/deployment/README.md) พร้อม [โค้ดสำหรับพรีเซนต์ประมาณ 2 หน้า](docs/deployment-presentation.md) และ [สรุป diff/ผลทดสอบสำหรับ PR](docs/deployment-pr.md)
+
 เตรียม dependency ครั้งแรก (ต้องมี Python 3 และ Node.js/npm):
 
 ```bash

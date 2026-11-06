@@ -1,0 +1,15 @@
+# ใช้ร่วมกับ compose.yaml บน Ubuntu เมื่อต่อ Cloudflare Tunnel เดิม
+services:
+  web:
+    environment:
+      CHAT_PUBLIC_ORIGIN: ${CHAT_PUBLIC_ORIGIN:?Set CHAT_PUBLIC_ORIGIN to the HTTPS website origin}
+    networks:
+      chat:
+      tunnel:
+        aliases:
+          - socket-chat-web
+
+networks:
+  tunnel:
+    external: true
+    name: ${TUNNEL_NETWORK:-socket-chat-tunnel}

@@ -35,8 +35,8 @@ class WebBridgeTests(unittest.IsolatedAsyncioTestCase):
         await self.client.start_server()
         self.addAsyncCleanup(self.client.close)
 
-    async def event(self, websocket, event_type):
-        async with async_timeout(5):
+    async def event(self, websocket, event_type, timeout=5):
+        async with async_timeout(timeout):
             while True:
                 event = await websocket.receive_json()
                 if event["type"] == event_type:
@@ -287,7 +287,8 @@ class WebBridgeTests(unittest.IsolatedAsyncioTestCase):
             unavailable.bind(("127.0.0.1", 0))
             websocket = await self.client.ws_connect("/ws")
             await websocket.send_json({"type": "connect", "host": "127.0.0.1", "port": unavailable.getsockname()[1], "name": "alice"})
-            event = await self.event(websocket, "disconnected")
+            # เวลารอต้องเผื่อให้ TCP connect timeout (5 วินาที) ส่ง error ผ่าน bridge
+            event = await self.event(websocket, "disconnected", timeout=8)
             self.assertIn("Connection error", event["text"])
         alice = await self.registered("alice")
         await self.users(alice, ["alice"])
