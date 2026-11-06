@@ -58,11 +58,11 @@
       <section class="border-b border-line px-5 py-5 sm:px-7" aria-labelledby="connection-heading">
         <h2 id="connection-heading" class="mb-3 text-xs font-semibold tracking-[0.14em] text-soft uppercase">Connection</h2>
         <form id="connection-form" class="grid grid-cols-2 items-end gap-3 md:grid-cols-[minmax(0,1.4fr)_6rem_minmax(0,1fr)_auto_auto]">
-          <div class="col-span-2 min-w-0 md:col-span-1">
+          <div id="server-host-field" class="col-span-2 min-w-0 md:col-span-1">
             <label for="server-host" class="mb-1.5 block text-sm text-soft">Server address</label>
             <input id="server-host" name="host" value="127.0.0.1" required spellcheck="false" autocomplete="off" class="h-11 w-full rounded-lg border border-line bg-page/40 px-3 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-500/20 disabled:text-slate-500">
           </div>
-          <div>
+          <div id="server-port-field">
             <label for="server-port" class="mb-1.5 block text-sm text-soft">Port</label>
             <input id="server-port" name="port" type="number" min="1" max="65535" step="1" value="5000" required class="h-11 w-full rounded-lg border border-line bg-page/40 px-3 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-500/20 disabled:text-slate-500">
           </div>

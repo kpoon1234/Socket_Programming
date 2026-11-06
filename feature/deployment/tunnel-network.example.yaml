@@ -1,0 +1,13 @@
+# รวม networks ส่วนนี้เข้ากับ Compose/Portainer Stack เดิมของ cloudflared
+# ใช้ชื่อ service จริง และเก็บ image, command, token, volumes, networks เดิมไว้
+services:
+  cloudflared:
+    networks:
+      - default
+      - socket-chat-tunnel
+
+networks:
+  default:
+  socket-chat-tunnel:
+    external: true
+    name: socket-chat-tunnel
