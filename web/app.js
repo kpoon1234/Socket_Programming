@@ -264,7 +264,9 @@ function ensureGroupRoom(group) {
     badge.className = "rounded-full bg-slate-200 px-1.5 text-xs text-slate-800";
     tab.append(title, badge);
     tab.addEventListener("click", () => openGroup(group.group_id));
-    room = { kind: "group", group_id: group.group_id, tab, panel, title, badge, creator };
+    // Composer setup refreshes controls immediately, so membership must already exist.
+    room = { kind: "group", group_id: group.group_id, name: group.name,
+      members: group.members, tab, panel, title, badge, creator };
     initializeComposer(room);
     groupRooms.set(group.group_id, room);
     roomTabs.append(tab);
