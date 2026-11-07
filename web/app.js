@@ -1214,9 +1214,9 @@ async function verifyAndSubmitPasscode(pin) {
     room.unlockedPin = pin;
     setRoomSecretMode(room, true);
 
-    // Sync secret chat activation & PIN to all participants in the room
-    if (isInitialSetup && window.E2EE?.createSyncMessage) {
-      sendSyncPayload(room, window.E2EE.createSyncMessage(pin));
+    // Sync secret chat activation mode (without sending PIN) to all participants in the room
+    if (isInitialSetup && window.E2EE?.createSecretSyncMessage) {
+      sendSyncPayload(room, window.E2EE.createSecretSyncMessage());
     }
 
     const textToSend = room.pendingSendText;
@@ -1252,7 +1252,7 @@ function handleRoomOpened(event) {
   let foundSecret = event.is_secret === true;
   let foundNormal = event.is_secret === false;
   for (const m of event.messages) {
-    if (window.E2EE?.isSyncMessage(m.text) || window.E2EE?.isEncrypted(m.text)) {
+    if (window.E2EE?.isSecretSyncMessage?.(m.text) || window.E2EE?.isSyncMessage?.(m.text) || window.E2EE?.isEncrypted(m.text)) {
       foundSecret = true;
       break;
     }
@@ -1281,18 +1281,11 @@ function handleRoomOpened(event) {
 
 function handlePrivateMessage(event) {
   const room = ensureRoom({ room_id: event.room_id, members: [event.from, event.to] });
-  if (window.E2EE?.isSyncMessage(event.text)) {
-    const pin = window.E2EE.extractSyncPin(event.text);
-    if (pin) {
-      setRoomSecretMode(room, true);
-      room.unlockedPin = pin;
-      updateSecretChatUI(room);
-      window.E2EE.unlockRoom(roomKey(room), pin).then(() => {
-        updateSecretChatUI(room);
-        renderMessages(room);
-        updateRoomControls(room);
-      });
-    }
+  if (window.E2EE?.isSecretSyncMessage?.(event.text) || window.E2EE?.isSyncMessage?.(event.text)) {
+    setRoomSecretMode(room, true);
+    updateSecretChatUI(room);
+    renderMessages(room);
+    updateRoomControls(room);
     return;
   }
   if (window.E2EE?.isNormalSyncMessage?.(event.text)) {
@@ -1322,7 +1315,7 @@ function handleGroupOpened(event) {
   let foundSecret = event.is_secret === true;
   let foundNormal = event.is_secret === false;
   for (const m of event.messages) {
-    if (window.E2EE?.isSyncMessage(m.text) || window.E2EE?.isEncrypted(m.text)) {
+    if (window.E2EE?.isSecretSyncMessage?.(m.text) || window.E2EE?.isSyncMessage?.(m.text) || window.E2EE?.isEncrypted(m.text)) {
       foundSecret = true;
       break;
     }
@@ -1353,18 +1346,11 @@ function handleGroupMessage(event) {
   if (departedGroups.has(event.group_id) && !pendingJoins.has(event.group_id)) return;
   const room = groupRooms.get(event.group_id);
   if (!room) return;
-  if (window.E2EE?.isSyncMessage(event.text)) {
-    const pin = window.E2EE.extractSyncPin(event.text);
-    if (pin) {
-      setRoomSecretMode(room, true);
-      room.unlockedPin = pin;
-      updateSecretChatUI(room);
-      window.E2EE.unlockRoom(roomKey(room), pin).then(() => {
-        updateSecretChatUI(room);
-        renderMessages(room);
-        updateRoomControls(room);
-      });
-    }
+  if (window.E2EE?.isSecretSyncMessage?.(event.text) || window.E2EE?.isSyncMessage?.(event.text)) {
+    setRoomSecretMode(room, true);
+    updateSecretChatUI(room);
+    renderMessages(room);
+    updateRoomControls(room);
     return;
   }
   if (window.E2EE?.isNormalSyncMessage?.(event.text)) {
