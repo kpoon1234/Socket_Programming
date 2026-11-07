@@ -272,7 +272,10 @@ Server continues accepting other clients
 
 ```bash
 .venv/bin/python -B -m unittest discover -s tests -v
+npm run test:ui
 ```
+
+`test:ui` ตรวจ event handler ฝั่งหน้าเว็บสำหรับการสร้างกลุ่ม, Join ทั้งสองลำดับคำตอบ และการกลับมาเชื่อมต่อด้วยสมาชิกเดิม โดยใช้ DOM จำลองและไม่ต้องติดตั้ง dependency เพิ่ม
 
 ทดสอบการแบ่งและรวมข้อความ UTF-8 ชื่อซ้ำ การส่งส่วนตัว การส่งพร้อมกัน การนำชื่อกลับมาใช้ และการปิด Server รวมถึง WebSocket bridge หลาย session และการปิดแท็บ/bridge โดยใช้พอร์ตว่างอัตโนมัติสำหรับการทดสอบ ไม่รบกวน Server ที่พอร์ต `5000` หากไม่ได้ติดตั้ง aiohttp ชุดทดสอบ bridge จะข้ามตัวเอง
 

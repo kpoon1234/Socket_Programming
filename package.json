@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "test:ui": "node --test tests/group_ui.test.js",
     "build:css": "tailwindcss -i ./web/input.css -o ./web/assets/styles.css --minify",
     "watch:css": "tailwindcss -i ./web/input.css -o ./web/assets/styles.css --watch",
     "check:js": "node --check web/app.js"
