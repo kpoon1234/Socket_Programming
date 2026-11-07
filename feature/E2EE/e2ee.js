@@ -184,25 +184,24 @@
     return hash.slice(0, 16); // 16-byte Auth Tag
   }
 
-  const SYNC_PREFIX = "🔒 pin:sync:";
+  const SECRET_SYNC_PREFIX = "🔒 mode:secret";
   const NORMAL_SYNC_PREFIX = "💬 mode:normal";
 
   const E2EE = {
     PREFIX,
-    SYNC_PREFIX,
+    SECRET_SYNC_PREFIX,
     NORMAL_SYNC_PREFIX,
 
+    isSecretSyncMessage(text) {
+      return typeof text === "string" && (text.startsWith(SECRET_SYNC_PREFIX) || text.startsWith("🔒 pin:sync:"));
+    },
+
     isSyncMessage(text) {
-      return typeof text === "string" && text.startsWith(SYNC_PREFIX);
+      return this.isSecretSyncMessage(text);
     },
 
-    extractSyncPin(text) {
-      if (!this.isSyncMessage(text)) return null;
-      return text.slice(SYNC_PREFIX.length).trim();
-    },
-
-    createSyncMessage(pin) {
-      return `${SYNC_PREFIX}${pin}`;
+    createSecretSyncMessage() {
+      return SECRET_SYNC_PREFIX;
     },
 
     isNormalSyncMessage(text) {

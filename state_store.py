@@ -136,7 +136,7 @@ class ChatStateStore:
             for group in self.data["groups"].values():
                 item = deepcopy(group)
                 if item.get("is_secret") is None:
-                    has_secret = any(msg["group_id"] == group["group_id"] and (msg["text"].startswith("🔒 pin:sync:") or msg["text"].startswith("🔒 enc:v1:")) for msg in self.data["group_messages"])
+                    has_secret = any(msg["group_id"] == group["group_id"] and (msg["text"].startswith("🔒 mode:secret") or msg["text"].startswith("🔒 pin:sync:") or msg["text"].startswith("🔒 enc:v1:")) for msg in self.data["group_messages"])
                     has_normal = any(msg["group_id"] == group["group_id"] and msg["text"].startswith("💬 mode:normal") for msg in self.data["group_messages"])
                     if has_secret:
                         item["is_secret"] = True
@@ -180,7 +180,7 @@ class ChatStateStore:
             data["groups"][group_id]["members"].append(name)
             # Sync ข้อความประเภท sync/mode ให้กับสมาชิกใหม่ที่เพิ่งเข้ากลุ่มด้วย
             for msg in data["group_messages"]:
-                if msg["group_id"] == group_id and (msg["text"].startswith("🔒 pin:sync:") or msg["text"].startswith("💬 mode:normal")):
+                if msg["group_id"] == group_id and (msg["text"].startswith("🔒 mode:secret") or msg["text"].startswith("🔒 pin:sync:") or msg["text"].startswith("💬 mode:normal")):
                     if name not in msg["visible_to"]:
                         msg["visible_to"].append(name)
             self.save(data)
@@ -222,7 +222,7 @@ class ChatStateStore:
                        if item["group_id"] == group_id and name in item["visible_to"]]
             result = {**deepcopy(group), "messages": history}
             if result.get("is_secret") is None:
-                has_secret = any(msg["group_id"] == group_id and (msg["text"].startswith("🔒 pin:sync:") or msg["text"].startswith("🔒 enc:v1:")) for msg in self.data["group_messages"])
+                has_secret = any(msg["group_id"] == group_id and (msg["text"].startswith("🔒 mode:secret") or msg["text"].startswith("🔒 pin:sync:") or msg["text"].startswith("🔒 enc:v1:")) for msg in self.data["group_messages"])
                 has_normal = any(msg["group_id"] == group_id and msg["text"].startswith("💬 mode:normal") for msg in self.data["group_messages"])
                 if has_secret:
                     result["is_secret"] = True
@@ -238,7 +238,7 @@ class ChatStateStore:
         with self.lock:
             group = self.group_for_member(group_id, sender)
             data = deepcopy(self.data)
-            if text.startswith("🔒 pin:sync:") or text.startswith("🔒 enc:v1:"):
+            if text.startswith("🔒 mode:secret") or text.startswith("🔒 pin:sync:") or text.startswith("🔒 enc:v1:"):
                 data["groups"][group_id]["is_secret"] = True
                 group["is_secret"] = True
             elif text.startswith("💬 mode:normal"):
@@ -263,7 +263,7 @@ class ChatStateStore:
                 if name in room["members"]:
                     item = deepcopy(room)
                     if item.get("is_secret") is None:
-                        has_secret = any(msg["room_id"] == room["room_id"] and (msg["text"].startswith("🔒 pin:sync:") or msg["text"].startswith("🔒 enc:v1:")) for msg in self.data["messages"])
+                        has_secret = any(msg["room_id"] == room["room_id"] and (msg["text"].startswith("🔒 mode:secret") or msg["text"].startswith("🔒 pin:sync:") or msg["text"].startswith("🔒 enc:v1:")) for msg in self.data["messages"])
                         has_normal = any(msg["room_id"] == room["room_id"] and msg["text"].startswith("💬 mode:normal") for msg in self.data["messages"])
                         if has_secret:
                             item["is_secret"] = True
@@ -302,7 +302,7 @@ class ChatStateStore:
                 raise ValueError("This private room is not available to you.")
             item = deepcopy(room)
             if item.get("is_secret") is None:
-                has_secret = any(msg["room_id"] == room_id and (msg["text"].startswith("🔒 pin:sync:") or msg["text"].startswith("🔒 enc:v1:")) for msg in self.data["messages"])
+                has_secret = any(msg["room_id"] == room_id and (msg["text"].startswith("🔒 mode:secret") or msg["text"].startswith("🔒 pin:sync:") or msg["text"].startswith("🔒 enc:v1:")) for msg in self.data["messages"])
                 has_normal = any(msg["room_id"] == room_id and msg["text"].startswith("💬 mode:normal") for msg in self.data["messages"])
                 if has_secret:
                     item["is_secret"] = True
@@ -325,7 +325,7 @@ class ChatStateStore:
                 "text": text, "timestamp": datetime.now(timezone.utc).isoformat(),
             }
             data = deepcopy(self.data)
-            if text.startswith("🔒 pin:sync:") or text.startswith("🔒 enc:v1:"):
+            if text.startswith("🔒 mode:secret") or text.startswith("🔒 pin:sync:") or text.startswith("🔒 enc:v1:"):
                 data["private_rooms"][room_id]["is_secret"] = True
                 room["is_secret"] = True
             elif text.startswith("💬 mode:normal"):
