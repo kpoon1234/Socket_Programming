@@ -4,7 +4,7 @@
 
 ## สถานะปัจจุบัน: Part 2 ขั้นที่ 1–7 และ AI summarization
 
-เพิ่มปุ่ม **Summarize** ในห้องส่วนตัวและห้องกลุ่มแล้ว Server เลือกข้อความล่าสุดไม่เกิน 30 ข้อความที่ผู้ขอมีสิทธิ์อ่าน ส่งไปสรุปภาษาไทยผ่าน Groq และแสดงผลเฉพาะผู้กด โดยระหว่างรอยังแชตต่อได้ ผลสรุปไม่บันทึกลงประวัติ ตั้ง `GROQ_API_KEY` และ `GROQ_MODEL` ใน `.env` บนเครื่อง Server ตาม [.env.example](.env.example) รายละเอียดอยู่ใน [feature/README.md](feature/README.md) และ flow อยู่ใน [flow/summarize.md](flow/summarize.md)
+เพิ่มปุ่ม **Summarize** ในห้องส่วนตัวและห้องกลุ่มแบบปกติแล้ว โดย Secret Chat จะซ่อนปุ่มและไม่รองรับการสรุป Server เลือกข้อความล่าสุดไม่เกิน 30 ข้อความที่ผู้ขอมีสิทธิ์อ่าน ส่งไปสรุปภาษาไทยผ่าน Groq และแสดงผลเฉพาะผู้กด โดยระหว่างรอยังแชตต่อได้ ผลสรุปไม่บันทึกลงประวัติ ตั้ง `GROQ_API_KEY` และ `GROQ_MODEL` ใน `.env` บนเครื่อง Server ตาม [.env.example](.env.example) รายละเอียดอยู่ใน [feature/README.md](feature/README.md) และ flow อยู่ใน [flow/summarize.md](flow/summarize.md)
 
 หน้าเว็บเชื่อมต่อ Server ด้วยชื่อไม่ซ้ำ และแสดงรายชื่อออนไลน์ที่อัปเดตตามการเข้า ออก และหลุด รวมชื่อตัวเองด้วย แต่ละแท็บมี WebSocket, `NetworkClient`, คิว และ TCP Socket แยกกัน
 

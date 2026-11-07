@@ -491,10 +491,14 @@ def route_message(sender, message):
 
 
 def summary_snapshot(sender, room_type, room_id):
-    """อ่านประวัติห้องผ่าน state store ซึ่งตรวจสิทธิ์ของผู้ขอให้ด้วย."""
+    """อ่านประวัติที่ผู้ขอมีสิทธิ์ และปฏิเสธ Secret Chat ก่อนส่งให้ AI."""
     if room_type == "group":
-        return chat_state.group_snapshot(room_id, sender.name)
-    return chat_state.snapshot(room_id, sender.name)
+        snapshot = chat_state.group_snapshot(room_id, sender.name)
+    else:
+        snapshot = chat_state.snapshot(room_id, sender.name)
+    if snapshot.get("is_secret") is True:
+        raise SummaryError("secret_chat_unsupported", "AI summaries are not available in Secret Chat.")
+    return snapshot
 
 
 def summary_session_active(sender):
@@ -524,6 +528,8 @@ def run_summary(sender, context, messages, epoch):
                 if sender.summary_epochs.get(context["room_id"], 0) != epoch:
                     raise ValueError("Room access changed while summarizing.")
                 summary_snapshot(sender, context["room_type"], context["room_id"])
+            except SummaryError as error:
+                event = {"type": "error", **context, "code": error.code, "text": str(error)}
             except ValueError:
                 event = {"type": "error", **context, "code": "access_changed",
                          "text": "Room access changed. Request a new summary after joining."}
