@@ -124,6 +124,50 @@ class SummarySocketTests(ServerTestCase):
         self.assertEqual(result["message_count"], 2)
         self.assertEqual([item["text"] for item in json.loads(result["summary"])], ["visible-one", "visible-two"])
 
+    def test_secret_private_and_group_chats_reject_summary_without_calling_provider(self):
+        alice, bob = self.peer("alice"), self.peer("bob")
+        alice.send({"type": "open_private", "to": "bob", "request_id": "open"})
+        private_id = self.event(alice, "room_opened")["room_id"]
+        group_id = self.group(alice, bob)
+        for room_type, room_id in (("private", private_id), ("group", group_id)):
+            for text in ("🔒 pin:sync:123456", "🔒 enc:v1:salt:tag:ciphertext"):
+                with self.subTest(room_type=room_type, text=text):
+                    command = {"type": f"{room_type}_message", "text": text, "request_id": "secret"}
+                    command["group_id" if room_type == "group" else "room_id"] = room_id
+                    alice.send(command)
+                    self.event(alice, "sent")
+                    # ข้อมูลจาก Client ต้องไม่เปิดสรุปให้ห้องลับได้
+                    self.summarize(alice, room_id, room_type=room_type, is_secret=False)
+                    error = self.event(alice, "error")
+                    self.assertEqual(error["code"], "secret_chat_unsupported")
+                    self.assertEqual(error["request_id"], "summary")
+                    self.assertEqual(error["room_type"], room_type)
+                    self.assertEqual(error["room_id"], room_id)
+        self.assertNotIn("Summary provider started", "".join(self.output.history))
+        self.send_group(alice, group_id, "🔒 enc:v1:still:chatting:encrypted")
+
+    def test_switching_to_secret_chat_during_summary_discards_result(self):
+        alice, bob = self.peer("alice"), self.peer("bob")
+        alice.send({"type": "open_private", "to": "bob", "request_id": "open"})
+        private_id = self.event(alice, "room_opened")["room_id"]
+        group_id = self.group(alice, bob)
+        for room_type, room_id in (("private", private_id), ("group", group_id)):
+            with self.subTest(room_type=room_type):
+                self.release_path.unlink(missing_ok=True)
+                command = {"type": f"{room_type}_message", "text": "hold-ai", "request_id": "send"}
+                command["group_id" if room_type == "group" else "room_id"] = room_id
+                alice.send(command)
+                self.event(alice, "sent")
+                self.summarize(alice, room_id, room_type=room_type)
+                self.output.wait_for("Summary provider started")
+                alice.send({**command, "text": "🔒 pin:sync:123456"})
+                self.event(alice, "sent")
+                self.release_path.touch()
+                error = self.event(alice, "error")
+                self.assertEqual(error["code"], "secret_chat_unsupported")
+                self.assertEqual(error["request_id"], "summary")
+                self.assertEqual(error["room_id"], room_id)
+
     def test_validation_outsider_and_empty_room_do_not_call_provider(self):
         alice, bob, anonymous = self.peer("alice"), self.peer("bob"), self.peer()
         group_id = self.group(alice)

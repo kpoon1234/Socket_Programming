@@ -34,7 +34,7 @@ sequenceDiagram
 
 | ไฟล์ | หน้าที่ |
 | --- | --- |
-| `web/index.html` | ปุ่ม Summarize ในทั้งสองชนิดห้อง ข้อความแจ้งการส่งไป Groq และ template พื้นที่ผลสรุป |
+| `web/index.html` | ปุ่ม Summarize ในห้องส่วนตัวและกลุ่มแบบปกติ ข้อความแจ้งการส่งไป Groq และ template พื้นที่ผลสรุป โดยซ่อนทั้งหมดใน Secret Chat |
 | `web/app.js` | สร้าง request_id เก็บสถานะรอต่อห้อง ป้องกันกดซ้ำ แสดงผล/ข้อผิดพลาด และจับผลให้ถูกห้องแม้สลับแท็บ |
 | `web_bridge.py` | รับ WebSocket และส่งเฉพาะ room_type, room_id, request_id ผ่าน NetworkClient โดยไม่รับประวัติหรือ key จาก Browser |
 | `client_network.py` | ใช้ sender/receiver และคิวเดิมส่งต่อคำขอและเหตุการณ์ ไม่ต้องเพิ่ม Socket ใหม่สำหรับ AI |

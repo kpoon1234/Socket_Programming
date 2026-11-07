@@ -439,7 +439,11 @@ function updateRoomControls(room) {
   room.send.disabled = room.input.disabled || room.pending !== null || !room.input.value.trim();
   const summaryRunning = [...requests.values()].some((request) => request.kind === "summarize");
   const canRead = currentName !== null && (!isGroup || room.members.includes(currentName));
-  room.summarize.disabled = !canRead || !room.loaded || leaving || summaryRunning;
+  const secret = isRoomSecret(room) === true;
+  room.summarize.hidden = secret;
+  room.summaryHint.hidden = secret;
+  if (secret) room.summaryPanel.hidden = true;
+  room.summarize.disabled = secret || !canRead || !room.loaded || leaving || summaryRunning;
   room.summarize.textContent = room.summaryPending ? "Summarizing…" : "Summarize";
   if (isGroup) {
     room.leave.disabled = !available || leaving || pendingJoins.has(room.group_id) || room.pending !== null;
@@ -561,7 +565,8 @@ function initializeComposer(room) {
     presence: panel.querySelector("[data-presence]"), status: panel.querySelector("[data-send-status]"),
     failed: panel.querySelector("[data-failed]"), failedText: null,
     leave: panel.querySelector("[data-leave]"),
-    summarize: panel.querySelector("[data-summarize]"), summaryPending: null, summaryAfterSequence: 0,
+    summarize: panel.querySelector("[data-summarize]"), summaryHint: panel.querySelector("[data-summary-hint]"),
+    summaryPending: null, summaryAfterSequence: 0,
     summaryPanel, summaryText: summaryPanel.querySelector("[data-summary-text]"),
     summaryStatus: summaryPanel.querySelector("[data-summary-status]"),
     summaryError: summaryPanel.querySelector("[data-summary-error]"),
@@ -682,6 +687,7 @@ function updateSecretChatUI(room) {
       room.secretPrompt.hidden = status !== null || hasMessages;
     }
   }
+  updateRoomControls(room);
 }
 
 function refreshSummaryControls() {
